@@ -46,8 +46,9 @@ async function submit() {
   try {
     await auth.login(form.email.trim(), form.password)
 
-    // Unverified users must verify first
-    if (!auth.emailVerified) {
+    // Unverified CITIZENs must verify their email.
+    // Responders and admins skip this (system-provisioned accounts).
+    if (!auth.emailVerified && auth.role === 'citizen') {
       router.replace({ name: 'verify-email' })
       return
     }
