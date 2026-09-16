@@ -69,7 +69,8 @@ async function doRegister() {
       termsVersion: TERMS_VERSION,
     })
 
-    router.replace({ name: 'dashboard' })
+    // Redirect to the email verification screen
+    router.replace({ name: 'verify-email' })
   } catch (e) {
     switch (e.code) {
       case 'auth/email-already-in-use':
@@ -180,8 +181,8 @@ async function doRegister() {
       </button>
 
       <p class="tiny center">
-        You'll be asked to review and accept our
-        Terms &amp; Privacy Policy.
+        You'll be asked to review and accept our Terms &amp; Privacy Policy,
+        then verify your email address.
       </p>
 
       <div class="divider">or</div>

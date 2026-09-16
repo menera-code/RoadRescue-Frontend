@@ -7,6 +7,7 @@ import {
   onAuthStateChanged,
   updateProfile,
   sendPasswordResetEmail,
+  sendEmailVerification,
 } from 'firebase/auth'
 import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore'
 import { auth, db } from '@/firebase'
@@ -26,14 +27,13 @@ export const useAuthStore = defineStore('auth', () => {
   const profile = ref(null)     // Firestore users/{uid} document data
   const initializing = ref(true)
 
-  // Resolves the first time Firebase tells us the auth state. The router
-  // awaits this so we don't flash the login page while Firebase is still
-  // restoring a session from localStorage.
+  // Resolves the first time Firebase tells us the auth state.
   let resolveReady
   const readyPromise = new Promise((r) => (resolveReady = r))
 
   // ---------- Getters ----------
   const isAuthenticated = computed(() => !!user.value)
+  const emailVerified = computed(() => !!user.value?.emailVerified)
   const role = computed(() => profile.value?.role ?? null)
 
   const isCitizen = computed(() => role.value === ROLES.CITIZEN)
@@ -67,9 +67,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // Firebase calls this:
-  //   - once on app start (null or a cached user)
-  //   - again on every login / logout
+  // Firebase calls this on app start and every login/logout
   onAuthStateChanged(auth, async (fbUser) => {
     user.value = fbUser
     if (fbUser) {
@@ -93,15 +91,7 @@ export const useAuthStore = defineStore('auth', () => {
    * Register a new user.
    *
    * Public registration ALWAYS creates a CITIZEN account.
-   * Responder and admin accounts are provisioned manually by
-   * administrators (Firebase Console now, admin panel later).
-   *
-   * @param {Object} payload
-   * @param {string} payload.fullName
-   * @param {string} payload.email
-   * @param {string} payload.password
-   * @param {string} [payload.phone]
-   * @param {string} payload.termsVersion  - which T&C version they accepted
+   * A verification email is sent automatically after creation.
    */
   async function register(payload) {
     const { fullName, email, password, phone, termsVersion } = payload
@@ -109,33 +99,37 @@ export const useAuthStore = defineStore('auth', () => {
     const cred = await createUserWithEmailAndPassword(auth, email, password)
     await updateProfile(cred.user, { displayName: fullName })
 
+    // Send Firebase's built-in verification email
+    try {
+      await sendEmailVerification(cred.user)
+    } catch (e) {
+      // Non-fatal — user can request a resend from the verify screen
+      console.warn('[auth] could not send verification email', e)
+    }
+
     const docData = {
       uid: cred.user.uid,
       fullName,
       email: email.toLowerCase(),
       phone: phone || '',
-      role: ROLES.CITIZEN, // always citizen
+      role: ROLES.CITIZEN,
 
-      // Responder-only fields — null for citizens
       agency: null,
       badgeId: null,
 
-      // Citizens are active immediately
       status: 'active',
 
-      // Legal acceptance audit trail
       termsAccepted: true,
       termsVersion,
       termsAcceptedAt: serverTimestamp(),
 
-      // Timestamps
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     }
 
     await setDoc(doc(db, 'users', cred.user.uid), docData)
 
-    // Optimistic local update so the dashboard has data immediately
+    // Optimistic local update
     profile.value = { ...docData, createdAt: new Date() }
 
     return cred.user
@@ -143,6 +137,13 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function login(email, password) {
     const cred = await signInWithEmailAndPassword(auth, email, password)
+    // Refresh emailVerified from server
+    try {
+      await cred.user.reload()
+    } catch (e) {
+      // ignore
+    }
+    user.value = auth.currentUser
     if (!profile.value) await loadProfile(cred.user.uid)
     return cred.user
   }
@@ -157,6 +158,25 @@ export const useAuthStore = defineStore('auth', () => {
     await sendPasswordResetEmail(auth, email)
   }
 
+  /**
+   * Resend the verification email to the current user.
+   */
+  async function resendVerification() {
+    if (!user.value) throw new Error('Not signed in')
+    await sendEmailVerification(user.value)
+  }
+
+  /**
+   * Reload the current Firebase user to refresh emailVerified status.
+   * Reassigns user.value so Vue reactivity picks up the change.
+   */
+  async function reloadUser() {
+    if (!user.value) return
+    await user.value.reload()
+    // Firebase's User object mutates in place — reassign to trigger reactivity
+    user.value = { ...user.value }
+  }
+
   return {
     // state
     user,
@@ -165,6 +185,7 @@ export const useAuthStore = defineStore('auth', () => {
 
     // getters
     isAuthenticated,
+    emailVerified,
     isCitizen,
     isResponder,
     isAdmin,
@@ -178,5 +199,7 @@ export const useAuthStore = defineStore('auth', () => {
     login,
     logout,
     resetPassword,
+    resendVerification,
+    reloadUser,
   }
 })

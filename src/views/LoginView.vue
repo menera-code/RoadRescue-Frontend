@@ -46,6 +46,12 @@ async function submit() {
   try {
     await auth.login(form.email.trim(), form.password)
 
+    // Unverified users must verify first
+    if (!auth.emailVerified) {
+      router.replace({ name: 'verify-email' })
+      return
+    }
+
     // Prefer the redirect query, else go to dashboard
     const redirect = route.query.redirect
     if (typeof redirect === 'string' && redirect.startsWith('/')) {

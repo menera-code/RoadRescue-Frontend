@@ -21,6 +21,12 @@ const routes = [
     component: () => import('@/views/RegisterView.vue'),
     meta: { public: true, guestOnly: true },
   },
+  {
+    path: '/verify-email',
+    name: 'verify-email',
+    component: () => import('@/views/VerifyEmailView.vue'),
+    meta: { requiresAuth: true },
+  },
 
   // ------------------- Authenticated -------------------
   // Renders DashboardView.vue, which internally switches between
@@ -54,6 +60,16 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore()
   await auth.ready()
 
+  // Public route — allow
+  if (to.meta.public && !to.meta.requiresAuth) {
+    // Guest-only: redirect logged-in AND verified users away
+    if (to.meta.guestOnly && auth.isAuthenticated && auth.emailVerified) {
+      return { name: 'dashboard' }
+    }
+    return true
+  }
+
+  // Requires auth — must be signed in
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
     return {
       name: 'login',
@@ -61,7 +77,17 @@ router.beforeEach(async (to) => {
     }
   }
 
-  if (to.meta.guestOnly && auth.isAuthenticated) {
+  // Signed in but not verified — force verification screen
+  if (
+    auth.isAuthenticated &&
+    !auth.emailVerified &&
+    to.name !== 'verify-email'
+  ) {
+    return { name: 'verify-email' }
+  }
+
+  // Verified user shouldn't be on verify-email
+  if (auth.emailVerified && to.name === 'verify-email') {
     return { name: 'dashboard' }
   }
 
