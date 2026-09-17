@@ -56,9 +56,6 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
 </template>
 
 <style scoped>
-/* ============================================================
-   SHELL — mobile-first column layout
-   ============================================================ */
 .admin-shell {
   position: relative;
   display: flex;
@@ -92,7 +89,6 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
   line-height: 1.5;
 }
 
-/* Content region */
 .admin-content {
   flex: 1;
   display: flex;
@@ -102,38 +98,32 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
 
 .content-inner {
   width: 100%;
-  padding: 16px 16px calc(env(safe-area-inset-bottom, 0px) + 24px);
+  padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px
+    calc(80px + env(safe-area-inset-bottom, 0px));
 }
 
 .content-inner > * { min-width: 0; }
 
-/* Tighten for very small phones */
+/* Very small phones */
 @media (max-width: 380px) {
   .content-inner { padding-left: 12px; padding-right: 12px; }
 }
 
-/* Tablet portrait */
 @media (min-width: 640px) {
   .content-inner {
-    padding: 20px 24px calc(env(safe-area-inset-bottom, 0px) + 28px);
+    padding: calc(env(safe-area-inset-top, 0px) + 20px) 24px
+      calc(80px + env(safe-area-inset-bottom, 0px));
   }
 }
 
-/* Tablet landscape — cap width for readability */
 @media (min-width: 768px) and (max-width: 1023px) {
-  .content-inner {
-    max-width: 820px;
-    margin-inline: auto;
-  }
+  .content-inner { max-width: 820px; margin-inline: auto; }
 }
 
-/* ============================================================
-   DESKTOP — sidebar layout
-   ============================================================ */
+/* Desktop — sidebar on the left, bottom bar gone */
 @media (min-width: 1024px) {
   .admin-shell { flex-direction: row; }
 
-  /* Access banner overlays at top when shown */
   .access-banner {
     position: fixed;
     top: 0;
@@ -157,10 +147,6 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
 
 @media (min-width: 1440px) {
   .admin-content { margin-left: 280px; }
-
-  .content-inner {
-    max-width: 1380px;
-    padding: 32px 48px 48px;
-  }
+  .content-inner { max-width: 1380px; padding: 32px 48px 48px; }
 }
 </style>
