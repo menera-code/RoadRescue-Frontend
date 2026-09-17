@@ -8,6 +8,7 @@ import HistoryTab from './admin/HistoryTab.vue'
 import BarangaysTab from './admin/BarangaysTab.vue'
 import VerifyTab from './admin/VerifyTab.vue'
 import AnalyticsTab from './admin/AnalyticsTab.vue'
+import InsightsTab from './admin/InsightsTab.vue'
 import AdminProfileTab from './admin/AdminProfileTab.vue'
 
 const auth = useAuthStore()
@@ -45,6 +46,7 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
       <BarangaysTab v-else-if="activeTab === 'barangays'" />
       <VerifyTab v-else-if="activeTab === 'verify'" />
       <AnalyticsTab v-else-if="activeTab === 'analytics'" />
+      <InsightsTab v-else-if="activeTab === 'insights'" />
       <AdminProfileTab v-else-if="activeTab === 'profile'" />
     </main>
   </div>
