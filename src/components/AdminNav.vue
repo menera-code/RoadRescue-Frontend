@@ -2,10 +2,10 @@
 /**
  * AdminNav — responsive navigation.
  *
- * Mobile  (<768px):  bottom bar with elevated center "Verify" button
- * Desktop (>=768px): horizontal top bar with all tabs equal
+ * 7 tabs: History · Barangays · Analytics · Verify · Insights · Users · Profile
  *
- * 6 tabs: History · Barangays · Verify · Analytics · Insights · Profile
+ * Mobile  (<768px):  bottom bar, Verify elevated in the center (position 4 of 7)
+ * Desktop (>=768px): horizontal top bar with all tabs equal
  */
 
 const props = defineProps({
@@ -13,7 +13,8 @@ const props = defineProps({
     type: String,
     required: true,
     validator: (v) =>
-      ['history', 'barangays', 'verify', 'analytics', 'insights', 'profile'].includes(v),
+      ['history', 'barangays', 'analytics', 'verify', 'insights', 'users', 'profile']
+        .includes(v),
   },
   pendingCount: { type: Number, default: 0 },
 })
@@ -23,9 +24,10 @@ const emit = defineEmits(['update:modelValue'])
 const TABS = [
   { key: 'history',   label: 'History',   icon: 'clock' },
   { key: 'barangays', label: 'Barangays', icon: 'grid' },
-  { key: 'verify',    label: 'Verify',    icon: 'verify', center: true },
   { key: 'analytics', label: 'Analytics', icon: 'chart' },
+  { key: 'verify',    label: 'Verify',    icon: 'verify', center: true },
   { key: 'insights',  label: 'Insights',  icon: 'insight' },
+  { key: 'users',     label: 'Users',     icon: 'users' },
   { key: 'profile',   label: 'Profile',   icon: 'user' },
 ]
 
@@ -52,9 +54,8 @@ function select(key) {
         }"
         @click="select(tab.key)"
       >
-        <!-- Icon -->
         <span class="nav-icon">
-          <!-- Center (Verify) — special icon with badge -->
+          <!-- Verify (center, with badge) -->
           <template v-if="tab.center">
             <svg viewBox="0 0 24 24" fill="none" width="22" height="22">
               <path
@@ -80,7 +81,7 @@ function select(key) {
             </span>
           </template>
 
-          <!-- History (clock) -->
+          <!-- History -->
           <svg
             v-else-if="tab.icon === 'clock'"
             viewBox="0 0 24 24"
@@ -98,7 +99,7 @@ function select(key) {
             />
           </svg>
 
-          <!-- Barangays (grid) -->
+          <!-- Barangays -->
           <svg
             v-else-if="tab.icon === 'grid'"
             viewBox="0 0 24 24"
@@ -112,7 +113,7 @@ function select(key) {
             <rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2" />
           </svg>
 
-          <!-- Analytics (chart bars) -->
+          <!-- Analytics -->
           <svg
             v-else-if="tab.icon === 'chart'"
             viewBox="0 0 24 24"
@@ -155,7 +156,30 @@ function select(key) {
             />
           </svg>
 
-          <!-- Profile (user) -->
+          <!-- Users (people) -->
+          <svg
+            v-else-if="tab.icon === 'users'"
+            viewBox="0 0 24 24"
+            fill="none"
+            width="22"
+            height="22"
+          >
+            <circle cx="9" cy="8" r="3.2" stroke="currentColor" stroke-width="2" />
+            <path
+              d="M3 20a6 6 0 0 1 12 0"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
+            <path
+              d="M16 5.5a3 3 0 0 1 0 5.5M21 20a5 5 0 0 0-3-4.6"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
+          </svg>
+
+          <!-- Profile -->
           <svg
             v-else-if="tab.icon === 'user'"
             viewBox="0 0 24 24"
@@ -181,7 +205,7 @@ function select(key) {
 
 <style scoped>
 /* =========================================================
-   MOBILE (<768px) — bottom nav with elevated center
+   MOBILE (<768px) — bottom nav, 7 items, Verify at center
    ========================================================= */
 
 .admin-nav {
@@ -199,17 +223,17 @@ function select(key) {
 .nav-inner {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(7, 1fr);
   width: 100%;
-  max-width: 560px;
-  background: rgba(18, 28, 46, 0.92);
+  max-width: 620px;
+  background: rgba(18, 28, 46, 0.94);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-top: 1px solid var(--border);
   pointer-events: auto;
-  padding: 6px 4px 4px;
-  padding-left: max(4px, env(safe-area-inset-left));
-  padding-right: max(4px, env(safe-area-inset-right));
+  padding: 6px 2px 4px;
+  padding-left: max(2px, env(safe-area-inset-left));
+  padding-right: max(2px, env(safe-area-inset-right));
 }
 
 .nav-item {
@@ -220,16 +244,17 @@ function select(key) {
   justify-content: flex-end;
   gap: 2px;
   min-height: 52px;
-  padding: 6px 1px;
+  padding: 6px 0;
   background: none;
   border: none;
   color: var(--text-dim);
   font-size: 0.625rem;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   cursor: pointer;
   transition: color 0.15s ease, transform 0.12s ease;
   -webkit-tap-highlight-color: transparent;
+  min-width: 0;
 }
 
 .nav-item:active {
@@ -258,13 +283,14 @@ function select(key) {
 }
 
 .nav-label {
-  font-size: 0.5625rem;
+  font-size: 0.5rem;
   line-height: 1;
   margin-top: 2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+  letter-spacing: 0;
 }
 
 /* Center elevated button — mobile only */
@@ -275,11 +301,11 @@ function select(key) {
 
 .nav-item--center .nav-icon {
   position: absolute;
-  top: -50px;
+  top: -46px;
   left: 50%;
   transform: translateX(-50%);
-  width: 54px;
-  height: 54px;
+  width: 48px;
+  height: 48px;
   border-radius: 50%;
   background: linear-gradient(160deg, #4f8ff7 0%, #3b82f6 55%, #2563eb 100%);
   color: #fff;
@@ -293,8 +319,8 @@ function select(key) {
 }
 
 .nav-item--center .nav-icon svg {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
 }
 
 .nav-item--center:active .nav-icon {
@@ -310,22 +336,22 @@ function select(key) {
 }
 
 .nav-item--center .nav-label {
-  margin-top: 34px;
+  margin-top: 30px;
 }
 
 .center-badge {
   position: absolute;
   top: -4px;
   right: -4px;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 5px;
-  border-radius: 10px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
   background: var(--primary);
   color: #fff;
-  font-size: 0.6875rem;
+  font-size: 0.625rem;
   font-weight: 700;
-  line-height: 20px;
+  line-height: 18px;
   text-align: center;
   box-shadow: 0 0 0 2.5px var(--bg-elev);
   animation: badge-pulse 2s ease-in-out infinite;
@@ -336,8 +362,43 @@ function select(key) {
   50%      { transform: scale(1.08); }
 }
 
+/* ----------------------------------------------------------
+   Very small phones (<=380px) — icons only for non-active
+   ---------------------------------------------------------- */
+@media (max-width: 380px) {
+  .nav-item:not(.nav-item--center):not(.nav-item--active) .nav-label {
+    display: none;
+  }
+  .nav-item:not(.nav-item--center) {
+    min-height: 46px;
+    justify-content: center;
+  }
+  .nav-item--active:not(.nav-item--center) .nav-label {
+    font-size: 0.5625rem;
+    margin-top: 3px;
+  }
+}
+
+/* ----------------------------------------------------------
+   Ultra small (<=320px) — hide ALL labels
+   ---------------------------------------------------------- */
+@media (max-width: 320px) {
+  .nav-label {
+    display: none;
+  }
+  .nav-item {
+    justify-content: center;
+    padding: 6px 0;
+  }
+  .nav-item--center .nav-label {
+    display: block;
+    margin-top: 34px;
+    font-size: 0.5rem;
+  }
+}
+
 /* =========================================================
-   TABLET + DESKTOP (>=768px) — top horizontal nav
+   TABLET + DESKTOP (>=768px) — top horizontal nav, 7 items
    ========================================================= */
 @media (min-width: 768px) {
   .admin-nav {
@@ -354,27 +415,27 @@ function select(key) {
   }
 
   .nav-inner {
-    max-width: 1200px;
+    max-width: 1400px;
     margin-inline: auto;
     background: transparent;
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
     border: none;
-    padding: 8px 24px;
-    grid-template-columns: repeat(6, auto);
+    padding: 8px 20px;
+    grid-template-columns: repeat(7, auto);
     justify-content: center;
-    gap: 6px;
+    gap: 4px;
   }
 
   .nav-item {
     flex-direction: row;
     justify-content: center;
     align-items: center;
-    gap: 8px;
-    padding: 10px 16px;
-    min-height: 44px;
+    gap: 6px;
+    padding: 10px 12px;
+    min-height: 42px;
     border-radius: 10px;
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
     font-weight: 650;
     transition: background 0.15s ease, color 0.15s ease;
   }
@@ -394,21 +455,22 @@ function select(key) {
   }
 
   .nav-icon {
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
   }
 
   .nav-icon svg {
-    width: 18px;
-    height: 18px;
+    width: 17px;
+    height: 17px;
   }
 
   .nav-label {
     font-size: 0.8125rem;
     margin-top: 0;
+    letter-spacing: 0;
   }
 
-  /* Kill the mobile elevated-center styling */
+  /* Cancel the mobile elevated styling */
   .nav-item--center {
     padding-top: 10px;
   }
@@ -418,8 +480,8 @@ function select(key) {
     top: auto;
     left: auto;
     transform: none;
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
     border-radius: 0;
     background: none;
     box-shadow: none;
@@ -427,8 +489,8 @@ function select(key) {
   }
 
   .nav-item--center .nav-icon svg {
-    width: 18px;
-    height: 18px;
+    width: 17px;
+    height: 17px;
   }
 
   .nav-item--center:active .nav-icon,
@@ -444,23 +506,43 @@ function select(key) {
   .center-badge {
     top: -6px;
     right: -10px;
-    min-width: 18px;
-    height: 18px;
-    font-size: 0.625rem;
-    line-height: 18px;
+    min-width: 16px;
+    height: 16px;
+    font-size: 0.5625rem;
+    line-height: 16px;
   }
 }
 
 /* =========================================================
-   LARGE DESKTOP (>=1024px)
+   LARGE DESKTOP (>=1024px) — more breathing room
    ========================================================= */
 @media (min-width: 1024px) {
+  .nav-inner {
+    gap: 8px;
+    padding: 10px 28px;
+  }
+
+  .nav-item {
+    padding: 10px 16px;
+    font-size: 0.875rem;
+  }
+
+  .nav-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+/* =========================================================
+   VERY WIDE (>=1440px) — comfortable spacing
+   ========================================================= */
+@media (min-width: 1440px) {
   .nav-inner {
     gap: 10px;
   }
 
   .nav-item {
-    padding: 10px 18px;
+    padding: 10px 20px;
     font-size: 0.9375rem;
   }
 }

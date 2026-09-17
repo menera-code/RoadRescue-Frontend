@@ -9,6 +9,7 @@ import BarangaysTab from './admin/BarangaysTab.vue'
 import VerifyTab from './admin/VerifyTab.vue'
 import AnalyticsTab from './admin/AnalyticsTab.vue'
 import InsightsTab from './admin/InsightsTab.vue'
+import UsersTab from './admin/UsersTab.vue'
 import AdminProfileTab from './admin/AdminProfileTab.vue'
 
 const auth = useAuthStore()
@@ -26,27 +27,23 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
 
 <template>
   <div class="admin-shell">
-    <!-- Access banner -->
     <div v-if="!isAdmin" class="access-banner">
       <div class="access-icon" aria-hidden="true">🚫</div>
       <div class="access-body">
         <p class="access-title">Admin access required</p>
-        <p class="access-text">
-          This dashboard is only available to administrators.
-        </p>
+        <p class="access-text">This dashboard is only available to administrators.</p>
       </div>
     </div>
 
-    <!-- Top nav (desktop) / bottom nav (mobile) -->
     <AdminNav v-model="activeTab" :pending-count="pendingCount" />
 
-    <!-- Main content -->
     <main class="tab-stage">
       <HistoryTab v-if="activeTab === 'history'" />
       <BarangaysTab v-else-if="activeTab === 'barangays'" />
-      <VerifyTab v-else-if="activeTab === 'verify'" />
       <AnalyticsTab v-else-if="activeTab === 'analytics'" />
+      <VerifyTab v-else-if="activeTab === 'verify'" />
       <InsightsTab v-else-if="activeTab === 'insights'" />
+      <UsersTab v-else-if="activeTab === 'users'" />
       <AdminProfileTab v-else-if="activeTab === 'profile'" />
     </main>
   </div>
@@ -76,7 +73,6 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
 .access-title { font-size: 0.875rem; font-weight: 700; color: var(--danger); margin-bottom: 2px; }
 .access-text { font-size: 0.75rem; color: var(--text-muted); line-height: 1.5; }
 
-/* ---------- Content area ---------- */
 .tab-stage {
   flex: 1;
   display: flex;
@@ -84,8 +80,6 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
   width: 100%;
   max-width: 560px;
   margin-inline: auto;
-
-  /* Mobile: leave room for bottom nav */
   padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
   padding-top: calc(env(safe-area-inset-top, 0px) + 16px);
   padding-left: calc(20px + env(safe-area-inset-left, 0px));
@@ -97,11 +91,9 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
   min-width: 0;
 }
 
-/* Tablet */
 @media (min-width: 768px) {
   .tab-stage {
     max-width: 1000px;
-    /* No bottom nav padding — nav is at top now */
     padding-bottom: 40px;
     padding-top: 28px;
     padding-left: 32px;
@@ -109,7 +101,6 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
   }
 }
 
-/* Desktop */
 @media (min-width: 1024px) {
   .tab-stage {
     max-width: 1200px;
@@ -119,7 +110,6 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
   }
 }
 
-/* Wide desktop */
 @media (min-width: 1440px) {
   .tab-stage {
     max-width: 1360px;

@@ -1,18 +1,14 @@
 <script setup>
 import { computed } from 'vue'
 import { useAuthStore, ROLES } from '@/stores/auth'
+import { useHeartbeat } from '@/composables/useHeartbeat'
 import CitizenDashboard from './dashboards/CitizenDashboard.vue'
 import ResponderDashboard from './dashboards/ResponderDashboard.vue'
 import AdminDashboard from './dashboards/AdminDashboard.vue'
 
 const auth = useAuthStore()
+useHeartbeat()  // updates lastSeen every 5 min
 
-/**
- * Pick which dashboard to render based on the current user's role.
- * The router has already guaranteed the user is authenticated
- * (via meta.requiresAuth on the /dashboard route), so we don't need
- * to handle the "not logged in" case here.
- */
 const ActiveDashboard = computed(() => {
   switch (auth.role) {
     case ROLES.ADMIN:

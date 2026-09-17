@@ -21,17 +21,22 @@ const routes = [
     component: () => import('@/views/RegisterView.vue'),
     meta: { public: true, guestOnly: true },
   },
+
+  // ------------------- Auth flows -------------------
   {
     path: '/verify-email',
     name: 'verify-email',
     component: () => import('@/views/VerifyEmailView.vue'),
     meta: { requiresAuth: true },
   },
+  {
+    path: '/setup-account',
+    name: 'setup-account',
+    component: () => import('@/views/SetupAccountView.vue'),
+    meta: { requiresAuth: true },
+  },
 
-  // ------------------- Authenticated -------------------
-  // Renders DashboardView.vue, which internally switches between
-  // CitizenDashboard / ResponderDashboard / AdminDashboard based on
-  // the current user's role.
+  // ------------------- Dashboard -------------------
   {
     path: '/dashboard',
     name: 'dashboard',
@@ -49,34 +54,24 @@ const router = createRouter({
   scrollBehavior: () => ({ top: 0 }),
 })
 
-/**
- * Global navigation guard.
- *
- *   1. Wait for Firebase to restore the session (auth.ready())
- *   2. Public routes → allowed
- *   3. Guest-only routes → redirect verified/eligible users away
- *   4. Auth-required routes → redirect unauthenticated users to /login
- *   5. Citizens who haven't verified email → forced to /verify-email
- *   6. Verified users or non-citizens should not see /verify-email
- */
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
   await auth.ready()
 
-  // 2. Public route — allow
+  // 1. Public routes
   if (to.meta.public && !to.meta.requiresAuth) {
-    // Guest-only: redirect logged-in users who don't need verification
     if (
       to.meta.guestOnly &&
       auth.isAuthenticated &&
-      (auth.emailVerified || auth.role !== 'citizen')
+      (auth.emailVerified || auth.role !== 'citizen') &&
+      !auth.mustChangeCredentials
     ) {
       return { name: 'dashboard' }
     }
     return true
   }
 
-  // 4. Requires auth — must be signed in
+  // 2. Requires auth
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
     return {
       name: 'login',
@@ -84,8 +79,25 @@ router.beforeEach(async (to) => {
     }
   }
 
-  // 5. Unverified CITIZENs are forced to the verify-email screen.
-  //    Responders and admins skip verification (system-provisioned accounts).
+  // 3. Forced account setup for invited users
+  if (
+    auth.isAuthenticated &&
+    auth.mustChangeCredentials &&
+    to.name !== 'setup-account'
+  ) {
+    return { name: 'setup-account' }
+  }
+
+  // 4. Skip setup page if nothing to change
+  if (
+    auth.isAuthenticated &&
+    !auth.mustChangeCredentials &&
+    to.name === 'setup-account'
+  ) {
+    return { name: 'dashboard' }
+  }
+
+  // 5. Citizens must verify email
   if (
     auth.isAuthenticated &&
     !auth.emailVerified &&
@@ -95,7 +107,7 @@ router.beforeEach(async (to) => {
     return { name: 'verify-email' }
   }
 
-  // 6. Verified users OR non-citizens shouldn't be on verify-email
+  // 6. Verified user shouldn't be on verify-email
   if (
     (auth.emailVerified || auth.role !== 'citizen') &&
     to.name === 'verify-email'

@@ -8,13 +8,12 @@ import {
   updateProfile,
   sendPasswordResetEmail,
   sendEmailVerification,
+  updateEmail as fbUpdateEmail,
+  updatePassword as fbUpdatePassword,
 } from 'firebase/auth'
-import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore'
+import { doc, setDoc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore'
 import { auth, db } from '@/firebase'
 
-// The three roles recognised by the platform.
-// Only 'citizen' accounts can be created via the public registration form.
-// 'responder' and 'admin' accounts are provisioned by administrators only.
 export const ROLES = Object.freeze({
   CITIZEN: 'citizen',
   RESPONDER: 'responder',
@@ -23,11 +22,10 @@ export const ROLES = Object.freeze({
 
 export const useAuthStore = defineStore('auth', () => {
   // ---------- State ----------
-  const user = ref(null)        // Firebase Auth user object
-  const profile = ref(null)     // Firestore users/{uid} document data
+  const user = ref(null)
+  const profile = ref(null)
   const initializing = ref(true)
 
-  // Resolves the first time Firebase tells us the auth state.
   let resolveReady
   const readyPromise = new Promise((r) => (resolveReady = r))
 
@@ -40,12 +38,14 @@ export const useAuthStore = defineStore('auth', () => {
   const isResponder = computed(() => role.value === ROLES.RESPONDER)
   const isAdmin = computed(() => role.value === ROLES.ADMIN)
 
-  // Responders are only "active" once an admin has approved them.
   const isVerifiedResponder = computed(
     () => isResponder.value && profile.value?.status === 'active'
   )
 
-  // A role-agnostic flag: is the current account in good standing?
+  const mustChangeCredentials = computed(
+    () => !!profile.value?.mustChangeCredentials
+  )
+
   const isActive = computed(() => {
     if (!profile.value) return false
     if (isAdmin.value) return true
@@ -67,7 +67,6 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // Firebase calls this on app start and every login/logout
   onAuthStateChanged(auth, async (fbUser) => {
     user.value = fbUser
     if (fbUser) {
@@ -77,7 +76,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
     if (initializing.value) {
       initializing.value = false
-      resolveReady() // unblock the router
+      resolveReady()
     }
   })
 
@@ -86,24 +85,15 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   // ---------- Actions ----------
-
-  /**
-   * Register a new user.
-   *
-   * Public registration ALWAYS creates a CITIZEN account.
-   * A verification email is sent automatically after creation.
-   */
   async function register(payload) {
     const { fullName, email, password, phone, termsVersion } = payload
 
     const cred = await createUserWithEmailAndPassword(auth, email, password)
     await updateProfile(cred.user, { displayName: fullName })
 
-    // Send Firebase's built-in verification email
     try {
       await sendEmailVerification(cred.user)
     } catch (e) {
-      // Non-fatal — user can request a resend from the verify screen
       console.warn('[auth] could not send verification email', e)
     }
 
@@ -113,23 +103,19 @@ export const useAuthStore = defineStore('auth', () => {
       email: email.toLowerCase(),
       phone: phone || '',
       role: ROLES.CITIZEN,
-
       agency: null,
       badgeId: null,
-
       status: 'active',
-
+      disabled: false,
+      lastSeen: null,
       termsAccepted: true,
       termsVersion,
       termsAcceptedAt: serverTimestamp(),
-
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     }
 
     await setDoc(doc(db, 'users', cred.user.uid), docData)
-
-    // Optimistic local update
     profile.value = { ...docData, createdAt: new Date() }
 
     return cred.user
@@ -137,11 +123,10 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function login(email, password) {
     const cred = await signInWithEmailAndPassword(auth, email, password)
-    // Refresh emailVerified from server
     try {
       await cred.user.reload()
     } catch (e) {
-      // ignore
+      /* ignore */
     }
     user.value = auth.currentUser
     if (!profile.value) await loadProfile(cred.user.uid)
@@ -158,42 +143,53 @@ export const useAuthStore = defineStore('auth', () => {
     await sendPasswordResetEmail(auth, email)
   }
 
-  /**
-   * Resend the verification email to the current user.
-   */
   async function resendVerification() {
     if (!user.value) throw new Error('Not signed in')
     await sendEmailVerification(user.value)
   }
 
-  /**
-   * Reload the current Firebase user to refresh emailVerified status.
-   * Reassigns user.value so Vue reactivity picks up the change.
-   */
   async function reloadUser() {
     if (!user.value) return
     await user.value.reload()
-    // Firebase's User object mutates in place — reassign to trigger reactivity
     user.value = { ...user.value }
   }
 
+  /**
+   * Invited responders call this on first login.
+   * Updates Auth email + password, clears the flag in Firestore.
+   */
+  async function completeSetup({ newEmail, newPassword }) {
+    if (!user.value) throw new Error('Not signed in')
+
+    await fbUpdateEmail(user.value, newEmail)
+    await fbUpdatePassword(user.value, newPassword)
+
+    await updateDoc(doc(db, 'users', user.value.uid), {
+      email: newEmail.toLowerCase(),
+      mustChangeCredentials: false,
+      updatedAt: serverTimestamp(),
+    })
+
+    profile.value = {
+      ...(profile.value || {}),
+      email: newEmail.toLowerCase(),
+      mustChangeCredentials: false,
+    }
+  }
+
   return {
-    // state
     user,
     profile,
     initializing,
-
-    // getters
     isAuthenticated,
     emailVerified,
+    mustChangeCredentials,
     isCitizen,
     isResponder,
     isAdmin,
     isVerifiedResponder,
     isActive,
     role,
-
-    // methods
     ready,
     register,
     login,
@@ -201,5 +197,6 @@ export const useAuthStore = defineStore('auth', () => {
     resetPassword,
     resendVerification,
     reloadUser,
+    completeSetup,
   }
 })
