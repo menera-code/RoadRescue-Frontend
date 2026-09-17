@@ -64,7 +64,6 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
   background: var(--bg);
 }
 
-/* Access-denied banner */
 .access-banner {
   display: flex;
   gap: 12px;
@@ -96,15 +95,21 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
   min-width: 0;
 }
 
+/*
+ * CRITICAL: content must reserve enough bottom space for
+ *   64px  bottom nav
+ * + ~16px FAB overhang above the bar
+ * + 16px breathing room
+ * = ~100px + safe-area
+ */
 .content-inner {
   width: 100%;
   padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px
-    calc(80px + env(safe-area-inset-bottom, 0px));
+    calc(112px + env(safe-area-inset-bottom, 0px));
 }
 
 .content-inner > * { min-width: 0; }
 
-/* Very small phones */
 @media (max-width: 380px) {
   .content-inner { padding-left: 12px; padding-right: 12px; }
 }
@@ -112,7 +117,7 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
 @media (min-width: 640px) {
   .content-inner {
     padding: calc(env(safe-area-inset-top, 0px) + 20px) 24px
-      calc(80px + env(safe-area-inset-bottom, 0px));
+      calc(112px + env(safe-area-inset-bottom, 0px));
   }
 }
 
@@ -120,7 +125,7 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
   .content-inner { max-width: 820px; margin-inline: auto; }
 }
 
-/* Desktop — sidebar on the left, bottom bar gone */
+/* Desktop — bottom bar is gone, sidebar takes over */
 @media (min-width: 1024px) {
   .admin-shell { flex-direction: row; }
 

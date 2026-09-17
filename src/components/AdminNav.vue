@@ -7,7 +7,6 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:modelValue'])
 
-/* Bottom bar slots — 4 rails + 1 center FAB */
 const BOTTOM_LEFT = [
   { key: 'history', label: 'History',
     icon: `<svg viewBox="0 0 24 24" fill="none"><path d="M12 8v4l3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/></svg>` },
@@ -20,7 +19,6 @@ const BOTTOM_RIGHT = [
     icon: `<svg viewBox="0 0 24 24" fill="none"><circle cx="9" cy="8" r="3.5" stroke="currentColor" stroke-width="2"/><path d="M2.5 20c0-3.3 3-6 6.5-6s6.5 2.7 6.5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M16 4.5a3.5 3.5 0 010 7M22 20c0-2.8-2.3-5-5-5.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>` },
 ]
 
-/* Overflow items — shown in "More" sheet */
 const MORE_ITEMS = [
   { key: 'analytics', label: 'Analytics', desc: 'Charts & metrics',
     icon: `<svg viewBox="0 0 24 24" fill="none"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>` },
@@ -30,7 +28,6 @@ const MORE_ITEMS = [
     icon: `<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="9" r="3.5" stroke="currentColor" stroke-width="2"/><path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>` },
 ]
 
-/* Desktop sidebar — all tabs */
 const DESKTOP_TABS = [
   { key: 'verify', label: 'Verify', badge: true,
     icon: `<svg viewBox="0 0 24 24" fill="none"><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/></svg>` },
@@ -85,9 +82,9 @@ function select(key) {
 
   <!-- ============================================================
        MOBILE BOTTOM BAR (≤ 1023px)
+       5 flex children: 2 left tabs · FAB spacer · 2 right tabs
        ============================================================ -->
   <nav class="bottom-nav" aria-label="Admin navigation">
-    <!-- Left rail -->
     <button
       v-for="tab in BOTTOM_LEFT"
       :key="tab.key"
@@ -101,10 +98,9 @@ function select(key) {
       <span class="bottom-label">{{ tab.label }}</span>
     </button>
 
-    <!-- Center gap for the FAB -->
-    <span class="bottom-spacer" aria-hidden="true" />
+    <!-- Reserve space for the elevated FAB -->
+    <div class="bottom-fab-slot" aria-hidden="true" />
 
-    <!-- Right rail -->
     <button
       v-for="tab in BOTTOM_RIGHT"
       :key="tab.key"
@@ -118,7 +114,6 @@ function select(key) {
       <span class="bottom-label">{{ tab.label }}</span>
     </button>
 
-    <!-- More button -->
     <button
       type="button"
       class="bottom-tab"
@@ -136,9 +131,7 @@ function select(key) {
     </button>
   </nav>
 
-  <!-- ============================================================
-       ELEVATED VERIFY FAB
-       ============================================================ -->
+  <!-- Elevated Verify FAB — pinned above the bar -->
   <button
     type="button"
     class="verify-fab"
@@ -159,9 +152,7 @@ function select(key) {
     </span>
   </button>
 
-  <!-- ============================================================
-       MORE SHEET
-       ============================================================ -->
+  <!-- More sheet -->
   <Teleport to="body">
     <Transition name="sheet">
       <div
@@ -179,12 +170,7 @@ function select(key) {
 
           <header class="more-head">
             <h2 class="more-title">More sections</h2>
-            <button
-              type="button"
-              class="more-close"
-              aria-label="Close"
-              @click="showMore = false"
-            >
+            <button type="button" class="more-close" aria-label="Close" @click="showMore = false">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                 <path d="M6 6l12 12M18 6L6 18" stroke="currentColor"
                   stroke-width="2" stroke-linecap="round" />
@@ -216,15 +202,13 @@ function select(key) {
 </template>
 
 <style scoped>
-/* ============================================================
-   DESKTOP SIDEBAR — hidden on mobile
-   ============================================================ */
+/* Default: mobile only, desktop hidden */
 .desktop-nav { display: none; }
 .bottom-nav { display: flex; }
 .verify-fab { display: flex; }
 
 /* ============================================================
-   MOBILE BOTTOM BAR
+   MOBILE BOTTOM BAR — flex with explicit FAB slot
    ============================================================ */
 .bottom-nav {
   position: fixed;
@@ -232,26 +216,28 @@ function select(key) {
   right: 0;
   bottom: 0;
   z-index: 50;
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  align-items: end;
+
+  display: flex;
+  align-items: stretch;
   height: 64px;
   padding-bottom: env(safe-area-inset-bottom, 0px);
-  background: rgba(18, 28, 46, 0.96);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+
+  /* Fully opaque — content scrolling beneath disappears cleanly */
+  background: #121c2e;
   border-top: 1px solid var(--border);
   box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.35);
 }
 
 .bottom-tab {
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 3px;
   height: 64px;
-  padding: 6px 4px;
+  padding: 6px 2px;
   background: transparent;
   border: none;
   color: var(--text-muted);
@@ -259,10 +245,8 @@ function select(key) {
   cursor: pointer;
   transition: color 0.15s ease, transform 0.12s ease;
   -webkit-tap-highlight-color: transparent;
-  min-width: 0;
 }
 .bottom-tab:active { transform: scale(0.94); }
-
 .bottom-tab--on { color: #3b82f6; }
 
 .bottom-icon {
@@ -270,6 +254,7 @@ function select(key) {
   place-items: center;
   width: 22px;
   height: 22px;
+  flex-shrink: 0;
 }
 .bottom-icon :deep(svg) { width: 100%; height: 100%; }
 
@@ -279,12 +264,15 @@ function select(key) {
   letter-spacing: 0.01em;
   line-height: 1;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
-/* Center spacer — where the FAB lives */
-.bottom-spacer {
-  display: block;
-  width: 100%;
+/* Reserved column where the FAB sits — same width as a tab */
+.bottom-fab-slot {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 /* ============================================================
@@ -293,7 +281,7 @@ function select(key) {
 .verify-fab {
   position: fixed;
   left: 50%;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
   transform: translateX(-50%);
   z-index: 60;
 
@@ -301,36 +289,19 @@ function select(key) {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 1px;
 
   width: 68px;
   height: 68px;
   border-radius: 50%;
-  border: 4px solid var(--bg);
+  border: 4px solid #121c2e;
   background: linear-gradient(160deg, #4f8ff7 0%, #3b82f6 55%, #2563eb 100%);
   color: #fff;
   font-family: inherit;
   cursor: pointer;
 
-  box-shadow:
-    0 8px 22px rgba(59, 130, 246, 0.5),
-    0 0 0 0 rgba(59, 130, 246, 0.4);
-
-  transition: transform 0.15s ease, box-shadow 0.2s ease;
-  animation: fab-pulse 2.4s ease-in-out infinite;
-}
-
-@keyframes fab-pulse {
-  0%, 100% {
-    box-shadow:
-      0 8px 22px rgba(59, 130, 246, 0.5),
-      0 0 0 0 rgba(59, 130, 246, 0.4);
-  }
-  50% {
-    box-shadow:
-      0 8px 22px rgba(59, 130, 246, 0.5),
-      0 0 0 10px rgba(59, 130, 246, 0);
-  }
+  box-shadow: 0 8px 22px rgba(59, 130, 246, 0.5);
+  transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
 
 .verify-fab:active { transform: translateX(-50%) scale(0.94); }
@@ -338,7 +309,6 @@ function select(key) {
 .verify-fab--on {
   background: linear-gradient(160deg, #3cb886 0%, #2f9e73 55%, #267a58 100%);
   box-shadow: 0 8px 22px rgba(47, 158, 115, 0.55);
-  animation: none;
 }
 
 .verify-fab__icon {
@@ -373,15 +343,16 @@ function select(key) {
   align-items: center;
   justify-content: center;
   line-height: 1;
-  border: 2px solid var(--bg);
+  border: 2px solid #121c2e;
   box-shadow: 0 3px 8px rgba(230, 57, 70, 0.55);
 }
 
-/* Very small phones — tighten labels */
+/* Tiny phones — shrink labels + FAB slightly */
 @media (max-width: 380px) {
   .bottom-label { font-size: 0.5625rem; }
   .bottom-icon { width: 20px; height: 20px; }
-  .verify-fab { width: 64px; height: 64px; }
+  .verify-fab { width: 62px; height: 62px; }
+  .verify-fab__icon { width: 22px; height: 22px; }
 }
 
 /* ============================================================
@@ -452,7 +423,7 @@ function select(key) {
   align-items: center;
   gap: 14px;
   width: 100%;
-  padding: 14px 14px;
+  padding: 14px;
   min-height: 62px;
   background: var(--bg-input);
   border: 1px solid transparent;
@@ -477,21 +448,22 @@ function select(key) {
   color: #3b82f6;
 }
 .more-item__icon :deep(svg) { width: 100%; height: 100%; }
-.more-item__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.more-item__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 .more-item__label { font-size: 0.9375rem; font-weight: 700; }
 .more-item__desc { font-size: 0.75rem; color: var(--text-muted); line-height: 1.3; }
-.more-item__check {
-  color: #3b82f6;
-  font-weight: 800;
-  font-size: 1.125rem;
-  flex-shrink: 0;
-}
+.more-item__check { color: #3b82f6; font-weight: 800; font-size: 1.125rem; }
 
 .sheet-enter-active, .sheet-leave-active { transition: opacity 0.2s ease; }
 .sheet-enter-from, .sheet-leave-to { opacity: 0; }
 
 /* ============================================================
-   DESKTOP — hide mobile, show sidebar
+   DESKTOP
    ============================================================ */
 @media (min-width: 1024px) {
   .bottom-nav,
