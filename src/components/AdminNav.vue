@@ -4,6 +4,8 @@
  *
  * Mobile  (<768px):  bottom bar with elevated center "Verify" button
  * Desktop (>=768px): horizontal top bar with all tabs equal
+ *
+ * 6 tabs: History · Barangays · Verify · Analytics · Insights · Profile
  */
 
 const props = defineProps({
@@ -11,7 +13,7 @@ const props = defineProps({
     type: String,
     required: true,
     validator: (v) =>
-      ['history', 'barangays', 'verify', 'analytics', 'profile'].includes(v),
+      ['history', 'barangays', 'verify', 'analytics', 'insights', 'profile'].includes(v),
   },
   pendingCount: { type: Number, default: 0 },
 })
@@ -23,6 +25,7 @@ const TABS = [
   { key: 'barangays', label: 'Barangays', icon: 'grid' },
   { key: 'verify',    label: 'Verify',    icon: 'verify', center: true },
   { key: 'analytics', label: 'Analytics', icon: 'chart' },
+  { key: 'insights',  label: 'Insights',  icon: 'insight' },
   { key: 'profile',   label: 'Profile',   icon: 'user' },
 ]
 
@@ -129,6 +132,29 @@ function select(key) {
             <rect x="17" y="6" width="3" height="13" rx="0.5" stroke="currentColor" stroke-width="2" />
           </svg>
 
+          <!-- Insights (lightbulb) -->
+          <svg
+            v-else-if="tab.icon === 'insight'"
+            viewBox="0 0 24 24"
+            fill="none"
+            width="22"
+            height="22"
+          >
+            <path
+              d="M9 18h6M10 21h4"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M12 3a6 6 0 0 0-4 10.5c.7.6 1 1.5 1 2.5h6c0-1 .3-1.9 1-2.5A6 6 0 0 0 12 3Z"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linejoin="round"
+            />
+          </svg>
+
           <!-- Profile (user) -->
           <svg
             v-else-if="tab.icon === 'user'"
@@ -173,17 +199,17 @@ function select(key) {
 .nav-inner {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   width: 100%;
-  max-width: 520px;
+  max-width: 560px;
   background: rgba(18, 28, 46, 0.92);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-top: 1px solid var(--border);
   pointer-events: auto;
-  padding: 6px 6px 4px;
-  padding-left: max(6px, env(safe-area-inset-left));
-  padding-right: max(6px, env(safe-area-inset-right));
+  padding: 6px 4px 4px;
+  padding-left: max(4px, env(safe-area-inset-left));
+  padding-right: max(4px, env(safe-area-inset-right));
 }
 
 .nav-item {
@@ -194,7 +220,7 @@ function select(key) {
   justify-content: flex-end;
   gap: 2px;
   min-height: 52px;
-  padding: 6px 2px;
+  padding: 6px 1px;
   background: none;
   border: none;
   color: var(--text-dim);
@@ -221,9 +247,14 @@ function select(key) {
 .nav-icon {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   position: relative;
+}
+
+.nav-icon svg {
+  width: 20px;
+  height: 20px;
 }
 
 .nav-label {
@@ -231,6 +262,9 @@ function select(key) {
   line-height: 1;
   margin-top: 2px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 /* Center elevated button — mobile only */
@@ -256,6 +290,11 @@ function select(key) {
   transition: transform 0.15s ease, box-shadow 0.2s ease;
   display: grid;
   place-items: center;
+}
+
+.nav-item--center .nav-icon svg {
+  width: 24px;
+  height: 24px;
 }
 
 .nav-item--center:active .nav-icon {
@@ -322,9 +361,9 @@ function select(key) {
     -webkit-backdrop-filter: none;
     border: none;
     padding: 8px 24px;
-    grid-template-columns: repeat(5, auto);
+    grid-template-columns: repeat(6, auto);
     justify-content: center;
-    gap: 8px;
+    gap: 6px;
   }
 
   .nav-item {
@@ -332,7 +371,7 @@ function select(key) {
     justify-content: center;
     align-items: center;
     gap: 8px;
-    padding: 10px 18px;
+    padding: 10px 16px;
     min-height: 44px;
     border-radius: 10px;
     font-size: 0.875rem;
@@ -387,6 +426,11 @@ function select(key) {
     transition: none;
   }
 
+  .nav-item--center .nav-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+
   .nav-item--center:active .nav-icon,
   .nav-item--center.nav-item--active .nav-icon {
     transform: none;
@@ -412,11 +456,11 @@ function select(key) {
    ========================================================= */
 @media (min-width: 1024px) {
   .nav-inner {
-    gap: 12px;
+    gap: 10px;
   }
 
   .nav-item {
-    padding: 10px 22px;
+    padding: 10px 18px;
     font-size: 0.9375rem;
   }
 }
