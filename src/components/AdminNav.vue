@@ -1,549 +1,277 @@
 <script setup>
-/**
- * AdminNav — responsive navigation.
- *
- * 7 tabs: History · Barangays · Analytics · Verify · Insights · Users · Profile
- *
- * Mobile  (<768px):  bottom bar, Verify elevated in the center (position 4 of 7)
- * Desktop (>=768px): horizontal top bar with all tabs equal
- */
-
 const props = defineProps({
-  modelValue: {
-    type: String,
-    required: true,
-    validator: (v) =>
-      ['history', 'barangays', 'analytics', 'verify', 'insights', 'users', 'profile']
-        .includes(v),
-  },
+  modelValue: { type: String, required: true },
   pendingCount: { type: Number, default: 0 },
 })
-
 const emit = defineEmits(['update:modelValue'])
 
 const TABS = [
-  { key: 'history',   label: 'History',   icon: 'clock' },
-  { key: 'barangays', label: 'Barangays', icon: 'grid' },
-  { key: 'analytics', label: 'Analytics', icon: 'chart' },
-  { key: 'verify',    label: 'Verify',    icon: 'verify', center: true },
-  { key: 'insights',  label: 'Insights',  icon: 'insight' },
-  { key: 'users',     label: 'Users',     icon: 'users' },
-  { key: 'profile',   label: 'Profile',   icon: 'user' },
+  {
+    key: 'verify',
+    label: 'Verify',
+    badge: 'pending',
+    icon: `<svg viewBox="0 0 24 24" fill="none"><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/></svg>`,
+  },
+  {
+    key: 'history',
+    label: 'History',
+    icon: `<svg viewBox="0 0 24 24" fill="none"><path d="M12 8v4l3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/></svg>`,
+  },
+  {
+    key: 'barangays',
+    label: 'Barangays',
+    icon: `<svg viewBox="0 0 24 24" fill="none"><path d="M12 21s-7-6.5-7-11.5a7 7 0 1114 0C19 14.5 12 21 12 21z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="9.5" r="2.5" stroke="currentColor" stroke-width="2"/></svg>`,
+  },
+  {
+    key: 'analytics',
+    label: 'Analytics',
+    icon: `<svg viewBox="0 0 24 24" fill="none"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
+  },
+  {
+    key: 'insights',
+    label: 'Insights',
+    icon: `<svg viewBox="0 0 24 24" fill="none"><path d="M9 18h6M10 22h4M12 2a7 7 0 00-4 12.7c.6.5 1 1.2 1 2.1V17h6v-.2c0-.9.4-1.6 1-2.1A7 7 0 0012 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  },
+  {
+    key: 'users',
+    label: 'Users',
+    icon: `<svg viewBox="0 0 24 24" fill="none"><circle cx="9" cy="8" r="3.5" stroke="currentColor" stroke-width="2"/><path d="M2.5 20c0-3.3 3-6 6.5-6s6.5 2.7 6.5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M16 4.5a3.5 3.5 0 010 7M22 20c0-2.8-2.3-5-5-5.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
+  },
+  {
+    key: 'profile',
+    label: 'Profile',
+    icon: `<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="9" r="3.5" stroke="currentColor" stroke-width="2"/><path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
+  },
 ]
 
 function select(key) {
-  if (key === props.modelValue) return
   emit('update:modelValue', key)
 }
 </script>
 
 <template>
-  <nav class="admin-nav" role="tablist" aria-label="Admin navigation">
-    <div class="nav-inner">
+  <nav class="admin-nav" aria-label="Admin navigation">
+    <!-- Brand (desktop only) -->
+    <div class="nav-brand">
+      <span class="brand-mark" aria-hidden="true">⚡</span>
+      <div class="brand-text">
+        <p class="brand-title">RoadRescue</p>
+        <p class="brand-sub">Admin Console</p>
+      </div>
+    </div>
+
+    <div class="nav-scroll">
       <button
         v-for="tab in TABS"
         :key="tab.key"
         type="button"
-        role="tab"
-        :aria-selected="modelValue === tab.key"
-        :aria-label="tab.label"
-        class="nav-item"
-        :class="{
-          'nav-item--active': modelValue === tab.key,
-          'nav-item--center': tab.center,
-        }"
+        class="nav-tab"
+        :class="{ 'nav-tab--on': modelValue === tab.key }"
+        :aria-current="modelValue === tab.key ? 'page' : undefined"
         @click="select(tab.key)"
       >
-        <span class="nav-icon">
-          <!-- Verify (center, with badge) -->
-          <template v-if="tab.center">
-            <svg viewBox="0 0 24 24" fill="none" width="22" height="22">
-              <path
-                d="M9 12l2 2 4-4"
-                stroke="currentColor"
-                stroke-width="2.4"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <path
-                d="M12 2 4 6v6c0 5 3.4 9 8 10 4.6-1 8-5 8-10V6l-8-4Z"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linejoin="round"
-              />
-            </svg>
-            <span
-              v-if="pendingCount > 0"
-              class="center-badge"
-              :aria-label="`${pendingCount} unverified`"
-            >
-              {{ pendingCount > 9 ? '9+' : pendingCount }}
-            </span>
-          </template>
-
-          <!-- History -->
-          <svg
-            v-else-if="tab.icon === 'clock'"
-            viewBox="0 0 24 24"
-            fill="none"
-            width="22"
-            height="22"
-          >
-            <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" />
-            <path
-              d="M12 7v5l3 2"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-          </svg>
-
-          <!-- Barangays -->
-          <svg
-            v-else-if="tab.icon === 'grid'"
-            viewBox="0 0 24 24"
-            fill="none"
-            width="22"
-            height="22"
-          >
-            <rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2" />
-            <rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2" />
-            <rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2" />
-            <rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2" />
-          </svg>
-
-          <!-- Analytics -->
-          <svg
-            v-else-if="tab.icon === 'chart'"
-            viewBox="0 0 24 24"
-            fill="none"
-            width="22"
-            height="22"
-          >
-            <path
-              d="M3 3v18h18"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-            <rect x="7" y="13" width="3" height="6" rx="0.5" stroke="currentColor" stroke-width="2" />
-            <rect x="12" y="9" width="3" height="10" rx="0.5" stroke="currentColor" stroke-width="2" />
-            <rect x="17" y="6" width="3" height="13" rx="0.5" stroke="currentColor" stroke-width="2" />
-          </svg>
-
-          <!-- Insights (lightbulb) -->
-          <svg
-            v-else-if="tab.icon === 'insight'"
-            viewBox="0 0 24 24"
-            fill="none"
-            width="22"
-            height="22"
-          >
-            <path
-              d="M9 18h6M10 21h4"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-            <path
-              d="M12 3a6 6 0 0 0-4 10.5c.7.6 1 1.5 1 2.5h6c0-1 .3-1.9 1-2.5A6 6 0 0 0 12 3Z"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linejoin="round"
-            />
-          </svg>
-
-          <!-- Users (people) -->
-          <svg
-            v-else-if="tab.icon === 'users'"
-            viewBox="0 0 24 24"
-            fill="none"
-            width="22"
-            height="22"
-          >
-            <circle cx="9" cy="8" r="3.2" stroke="currentColor" stroke-width="2" />
-            <path
-              d="M3 20a6 6 0 0 1 12 0"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-            />
-            <path
-              d="M16 5.5a3 3 0 0 1 0 5.5M21 20a5 5 0 0 0-3-4.6"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-            />
-          </svg>
-
-          <!-- Profile -->
-          <svg
-            v-else-if="tab.icon === 'user'"
-            viewBox="0 0 24 24"
-            fill="none"
-            width="22"
-            height="22"
-          >
-            <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2" />
-            <path
-              d="M4 21a8 8 0 0 1 16 0"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-            />
-          </svg>
-        </span>
-
+        <span class="nav-icon" aria-hidden="true" v-html="tab.icon" />
         <span class="nav-label">{{ tab.label }}</span>
+        <span
+          v-if="tab.badge === 'pending' && pendingCount > 0"
+          class="nav-badge"
+          :aria-label="`${pendingCount} pending`"
+        >
+          {{ pendingCount > 99 ? '99+' : pendingCount }}
+        </span>
       </button>
     </div>
   </nav>
 </template>
 
 <style scoped>
-/* =========================================================
-   MOBILE (<768px) — bottom nav, 7 items, Verify at center
-   ========================================================= */
-
+/* ============================================================
+   MOBILE-FIRST — sticky top bar with horizontal scroll
+   ============================================================ */
 .admin-nav {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  z-index: 100;
-  display: flex;
-  justify-content: center;
-  pointer-events: none;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  padding-top: env(safe-area-inset-top, 0px);
 }
 
-.nav-inner {
-  position: relative;
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  width: 100%;
-  max-width: 620px;
-  background: rgba(18, 28, 46, 0.94);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border-top: 1px solid var(--border);
-  pointer-events: auto;
-  padding: 6px 2px 4px;
-  padding-left: max(2px, env(safe-area-inset-left));
-  padding-right: max(2px, env(safe-area-inset-right));
-}
+.nav-brand { display: none; }
 
-.nav-item {
-  position: relative;
+.nav-scroll {
   display: flex;
-  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.nav-scroll::-webkit-scrollbar { display: none; }
+
+.nav-tab {
+  position: relative;
+  display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 2px;
-  min-height: 52px;
-  padding: 6px 0;
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  font-size: 0.625rem;
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 8px 14px;
+  min-height: 40px;
+  border-radius: 99px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  font-weight: 650;
   cursor: pointer;
-  transition: color 0.15s ease, transform 0.12s ease;
+  transition: all 0.15s ease;
+  white-space: nowrap;
   -webkit-tap-highlight-color: transparent;
-  min-width: 0;
+  font-family: inherit;
 }
 
-.nav-item:active {
-  transform: scale(0.94);
-}
+.nav-tab:active { transform: scale(0.96); }
 
-.nav-item--active {
-  color: #3b82f6;
-}
-
-.nav-item--active .nav-icon svg {
-  filter: drop-shadow(0 0 6px rgba(59, 130, 246, 0.5));
+.nav-tab--on {
+  background: var(--bg-elev);
+  border-color: var(--border);
+  color: var(--text);
 }
 
 .nav-icon {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  position: relative;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
 }
+.nav-icon :deep(svg) { width: 100%; height: 100%; }
 
-.nav-icon svg {
-  width: 20px;
-  height: 20px;
-}
+.nav-label { line-height: 1; }
 
-.nav-label {
-  font-size: 0.5rem;
-  line-height: 1;
-  margin-top: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-  letter-spacing: 0;
-}
-
-/* Center elevated button — mobile only */
-.nav-item--center {
-  justify-content: flex-end;
-  padding-top: 0;
-}
-
-.nav-item--center .nav-icon {
-  position: absolute;
-  top: -46px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: linear-gradient(160deg, #4f8ff7 0%, #3b82f6 55%, #2563eb 100%);
-  color: #fff;
-  box-shadow:
-    0 6px 20px rgba(0, 0, 0, 0.35),
-    0 0 0 4px var(--bg),
-    0 4px 12px rgba(59, 130, 246, 0.5);
-  transition: transform 0.15s ease, box-shadow 0.2s ease;
-  display: grid;
+.nav-badge {
+  display: inline-grid;
   place-items: center;
-}
-
-.nav-item--center .nav-icon svg {
-  width: 22px;
-  height: 22px;
-}
-
-.nav-item--center:active .nav-icon {
-  transform: translateX(-50%) scale(0.94);
-}
-
-.nav-item--center.nav-item--active .nav-icon {
-  box-shadow:
-    0 6px 20px rgba(0, 0, 0, 0.35),
-    0 0 0 4px var(--bg),
-    0 6px 20px rgba(59, 130, 246, 0.7),
-    0 0 0 10px rgba(59, 130, 246, 0.18);
-}
-
-.nav-item--center .nav-label {
-  margin-top: 30px;
-}
-
-.center-badge {
-  position: absolute;
-  top: -4px;
-  right: -4px;
   min-width: 18px;
   height: 18px;
-  padding: 0 4px;
+  padding: 0 5px;
   border-radius: 9px;
-  background: var(--primary);
+  background: var(--danger);
   color: #fff;
   font-size: 0.625rem;
   font-weight: 700;
-  line-height: 18px;
-  text-align: center;
-  box-shadow: 0 0 0 2.5px var(--bg-elev);
-  animation: badge-pulse 2s ease-in-out infinite;
+  line-height: 1;
 }
 
-@keyframes badge-pulse {
-  0%, 100% { transform: scale(1); }
-  50%      { transform: scale(1.08); }
-}
-
-/* ----------------------------------------------------------
-   Very small phones (<=380px) — icons only for non-active
-   ---------------------------------------------------------- */
+/* Small phones — tighten padding */
 @media (max-width: 380px) {
-  .nav-item:not(.nav-item--center):not(.nav-item--active) .nav-label {
-    display: none;
-  }
-  .nav-item:not(.nav-item--center) {
-    min-height: 46px;
-    justify-content: center;
-  }
-  .nav-item--active:not(.nav-item--center) .nav-label {
-    font-size: 0.5625rem;
-    margin-top: 3px;
-  }
+  .nav-scroll { padding: 6px 8px; gap: 3px; }
+  .nav-tab { padding: 7px 11px; font-size: 0.75rem; }
+  .nav-label { display: none; }
+  .nav-icon { width: 20px; height: 20px; }
 }
 
-/* ----------------------------------------------------------
-   Ultra small (<=320px) — hide ALL labels
-   ---------------------------------------------------------- */
-@media (max-width: 320px) {
-  .nav-label {
-    display: none;
-  }
-  .nav-item {
-    justify-content: center;
-    padding: 6px 0;
-  }
-  .nav-item--center .nav-label {
-    display: block;
-    margin-top: 34px;
-    font-size: 0.5rem;
-  }
-}
-
-/* =========================================================
-   TABLET + DESKTOP (>=768px) — top horizontal nav, 7 items
-   ========================================================= */
-@media (min-width: 768px) {
+/* ============================================================
+   DESKTOP — fixed left sidebar with brand
+   ============================================================ */
+@media (min-width: 1024px) {
   .admin-nav {
-    position: sticky;
+    position: fixed;
     top: 0;
-    bottom: auto;
-    padding-bottom: 0;
-    background: rgba(18, 28, 46, 0.85);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-bottom: 1px solid var(--border);
-    border-top: none;
-    z-index: 100;
+    left: 0;
+    bottom: 0;
+    width: 248px;
+    border-bottom: none;
+    border-right: 1px solid var(--border);
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
 
-  .nav-inner {
-    max-width: 1400px;
-    margin-inline: auto;
-    background: transparent;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-    border: none;
-    padding: 8px 20px;
-    grid-template-columns: repeat(7, auto);
-    justify-content: center;
-    gap: 4px;
-  }
-
-  .nav-item {
-    flex-direction: row;
-    justify-content: center;
+  .nav-brand {
+    display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 10px 12px;
-    min-height: 42px;
-    border-radius: 10px;
-    font-size: 0.8125rem;
-    font-weight: 650;
-    transition: background 0.15s ease, color 0.15s ease;
+    gap: 12px;
+    padding: 22px 20px 20px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
   }
 
-  .nav-item:hover {
-    background: rgba(255, 255, 255, 0.04);
+  .brand-mark {
+    width: 40px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    border-radius: 12px;
+    background: linear-gradient(160deg, #4f8ff7 0%, #3b82f6 55%, #2563eb 100%);
+    color: #fff;
+    font-size: 1.125rem;
+    flex-shrink: 0;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35);
+  }
+
+  .brand-text { min-width: 0; }
+  .brand-title {
+    font-size: 0.9375rem;
+    font-weight: 800;
     color: var(--text);
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+  }
+  .brand-sub {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: 2px;
   }
 
-  .nav-item:active {
-    transform: scale(0.98);
+  .nav-scroll {
+    flex-direction: column;
+    gap: 2px;
+    padding: 16px 12px;
+    overflow: visible;
+    flex: 1;
   }
 
-  .nav-item--active {
-    background: rgba(59, 130, 246, 0.14);
+  .nav-tab {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 10px 14px;
+    min-height: 44px;
+    border-radius: 10px;
+    font-size: 0.875rem;
+    gap: 12px;
+  }
+
+  .nav-tab:active { transform: none; }
+
+  .nav-tab--on {
+    background: rgba(59, 130, 246, 0.12);
+    border-color: transparent;
     color: #3b82f6;
   }
 
-  .nav-icon {
-    width: 18px;
-    height: 18px;
+  .nav-tab:not(.nav-tab--on):hover {
+    background: var(--bg-elev);
+    color: var(--text);
   }
 
-  .nav-icon svg {
-    width: 17px;
-    height: 17px;
-  }
+  .nav-icon { width: 20px; height: 20px; }
 
-  .nav-label {
-    font-size: 0.8125rem;
-    margin-top: 0;
-    letter-spacing: 0;
-  }
-
-  /* Cancel the mobile elevated styling */
-  .nav-item--center {
-    padding-top: 10px;
-  }
-
-  .nav-item--center .nav-icon {
-    position: relative;
-    top: auto;
-    left: auto;
-    transform: none;
-    width: 18px;
-    height: 18px;
-    border-radius: 0;
-    background: none;
-    box-shadow: none;
-    transition: none;
-  }
-
-  .nav-item--center .nav-icon svg {
-    width: 17px;
-    height: 17px;
-  }
-
-  .nav-item--center:active .nav-icon,
-  .nav-item--center.nav-item--active .nav-icon {
-    transform: none;
-    box-shadow: none;
-  }
-
-  .nav-item--center .nav-label {
-    margin-top: 0;
-  }
-
-  .center-badge {
-    top: -6px;
-    right: -10px;
-    min-width: 16px;
-    height: 16px;
-    font-size: 0.5625rem;
-    line-height: 16px;
-  }
+  .nav-badge { margin-left: auto; }
 }
 
-/* =========================================================
-   LARGE DESKTOP (>=1024px) — more breathing room
-   ========================================================= */
-@media (min-width: 1024px) {
-  .nav-inner {
-    gap: 8px;
-    padding: 10px 28px;
-  }
-
-  .nav-item {
-    padding: 10px 16px;
-    font-size: 0.875rem;
-  }
-
-  .nav-icon svg {
-    width: 18px;
-    height: 18px;
-  }
-}
-
-/* =========================================================
-   VERY WIDE (>=1440px) — comfortable spacing
-   ========================================================= */
+/* Large desktop */
 @media (min-width: 1440px) {
-  .nav-inner {
-    gap: 10px;
-  }
-
-  .nav-item {
-    padding: 10px 20px;
-    font-size: 0.9375rem;
-  }
+  .admin-nav { width: 280px; }
+  .nav-brand { padding: 26px 24px 22px; }
+  .nav-scroll { padding: 20px 16px; }
+  .nav-tab { padding: 12px 16px; min-height: 48px; }
 }
 </style>

@@ -3,21 +3,17 @@ import { ref, reactive, computed } from 'vue'
 import { useUsers } from '@/composables/useUsers'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
-
 const { users, loading } = useUsers()
 
-// ---------------------------------------------------------------------------
-// FILTERS
-// ---------------------------------------------------------------------------
 const searchQuery = ref('')
 const roleFilter = ref('all')
 const statusFilter = ref('all')
 
 const ROLE_TABS = [
-  { key: 'all',       label: 'All' },
-  { key: 'citizen',   label: 'Citizens' },
+  { key: 'all', label: 'All' },
+  { key: 'citizen', label: 'Citizens' },
   { key: 'responder', label: 'Responders' },
-  { key: 'admin',     label: 'Admins' },
+  { key: 'admin', label: 'Admins' },
 ]
 
 const filtered = computed(() => {
@@ -35,16 +31,8 @@ const filtered = computed(() => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// INVITE MODAL
-// ---------------------------------------------------------------------------
 const showInvite = ref(false)
-const invite = reactive({
-  fullName: '',
-  phone: '',
-  barangay: '',
-  agency: '',
-})
+const invite = reactive({ fullName: '', phone: '', barangay: '', agency: '' })
 const inviting = ref(false)
 const inviteError = ref('')
 const inviteSuccess = ref(null)
@@ -62,7 +50,6 @@ function openInvite() {
 async function submitInvite() {
   inviteError.value = ''
   inviteSuccess.value = null
-
   if (!invite.fullName.trim()) return (inviteError.value = 'Full name is required.')
   if (!invite.phone.trim()) return (inviteError.value = 'Phone number is required.')
   if (!invite.barangay.trim()) return (inviteError.value = 'Barangay is required.')
@@ -93,14 +80,9 @@ async function submitInvite() {
   } catch (e) {
     console.error('[UsersTab] invite failed', e)
     inviteError.value = 'Could not reach server. Try again.'
-  } finally {
-    inviting.value = false
-  }
+  } finally { inviting.value = false }
 }
 
-// ---------------------------------------------------------------------------
-// STATUS TOGGLE
-// ---------------------------------------------------------------------------
 const togglingId = ref(null)
 
 async function toggleDisabled(user) {
@@ -116,30 +98,14 @@ async function toggleDisabled(user) {
       body: JSON.stringify({ uid: user.uid, disabled: next }),
     })
     const data = await resp.json()
-    if (!resp.ok || !data.ok) {
-      alert(data.error || 'Could not update user.')
-    }
+    if (!resp.ok || !data.ok) alert(data.error || 'Could not update user.')
   } catch (e) {
     alert('Network error. Try again.')
-  } finally {
-    togglingId.value = null
-  }
+  } finally { togglingId.value = null }
 }
 
-// ---------------------------------------------------------------------------
-// HELPERS
-// ---------------------------------------------------------------------------
-const ROLE_LABELS = {
-  citizen: 'Citizen',
-  responder: 'Responder',
-  admin: 'Admin',
-}
-
-const ROLE_COLORS = {
-  citizen: '#3b82f6',
-  responder: '#2f9e73',
-  admin: '#8b5cf6',
-}
+const ROLE_LABELS = { citizen: 'Citizen', responder: 'Responder', admin: 'Admin' }
+const ROLE_COLORS = { citizen: '#3b82f6', responder: '#2f9e73', admin: '#8b5cf6' }
 
 function timeAgo(date) {
   if (!date) return 'Never'
@@ -154,46 +120,36 @@ function timeAgo(date) {
 
 function initials(name) {
   if (!name) return '?'
-  return name
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((n) => n[0]?.toUpperCase())
-    .join('')
+  return name.split(' ').filter(Boolean).slice(0, 2).map((n) => n[0]?.toUpperCase()).join('')
 }
 </script>
 
 <template>
   <section class="users-tab">
     <header class="head">
-      <div>
+      <div class="head-text">
         <h1 class="h1">Users</h1>
         <p class="muted">{{ users.length }} accounts registered.</p>
       </div>
       <button class="invite-btn" @click="openInvite">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-          <path
-            d="M12 5v14M5 12h14"
-            stroke="currentColor"
-            stroke-width="2.4"
-            stroke-linecap="round"
-          />
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
         </svg>
-        <span>Invite Responder</span>
+        <span class="invite-btn__label">Invite Responder</span>
       </button>
     </header>
 
-    <div class="chips" role="tablist">
+    <div class="chips" role="tablist" aria-label="Filter by role">
       <button
         v-for="f in ROLE_TABS"
         :key="f.key"
         type="button"
+        role="tab"
         class="chip"
         :class="{ 'chip--on': roleFilter === f.key }"
+        :aria-selected="roleFilter === f.key"
         @click="roleFilter = f.key"
-      >
-        {{ f.label }}
-      </button>
+      >{{ f.label }}</button>
     </div>
 
     <div class="toolbar">
@@ -201,12 +157,7 @@ function initials(name) {
         <span class="search-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
             <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" />
-            <path
-              d="m20 20-3.5-3.5"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-            />
+            <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
           </svg>
         </span>
         <input
@@ -236,7 +187,7 @@ function initials(name) {
       <p class="tiny state-text">Try changing your filters or search.</p>
     </div>
 
-    <ul v-else class="list">
+    <ul v-else class="grid">
       <li
         v-for="u in filtered"
         :key="u.uid"
@@ -248,9 +199,7 @@ function initials(name) {
             class="user-avatar"
             :style="{ background: ROLE_COLORS[u.role] || '#3b82f6' }"
             aria-hidden="true"
-          >
-            {{ initials(u.fullName) }}
-          </span>
+          >{{ initials(u.fullName) }}</span>
           <div class="user-body">
             <p class="user-name">{{ u.fullName || '—' }}</p>
             <p class="user-meta tiny">
@@ -290,9 +239,7 @@ function initials(name) {
             :class="{ 'mini-btn--danger': !u.disabled }"
             :disabled="togglingId === u.uid"
             @click="toggleDisabled(u)"
-          >
-            {{ u.disabled ? 'Enable' : 'Disable' }}
-          </button>
+          >{{ u.disabled ? 'Enable' : 'Disable' }}</button>
         </div>
       </li>
     </ul>
@@ -309,22 +256,11 @@ function initials(name) {
             <header class="modal-head">
               <div>
                 <h2 class="h2">Invite Responder</h2>
-                <p class="tiny">
-                  A temporary email and password will be created and sent by SMS.
-                </p>
+                <p class="tiny">A temporary email and password will be created and sent by SMS.</p>
               </div>
-              <button
-                class="modal-close"
-                aria-label="Close"
-                @click="showInvite = false"
-              >
+              <button class="modal-close" aria-label="Close" @click="showInvite = false">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                  <path
-                    d="M6 6l12 12M18 6L6 18"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                  />
+                  <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
                 </svg>
               </button>
             </header>
@@ -351,66 +287,34 @@ function initials(name) {
                     <code class="cred-value">{{ inviteSuccess.tempPassword }}</code>
                   </p>
                 </div>
-                <p class="tiny note">
-                  The responder will be required to change these on first login.
-                </p>
-                <button class="btn btn--primary" @click="showInvite = false">
-                  Close
-                </button>
+                <p class="tiny note">The responder will be required to change these on first login.</p>
+                <button class="btn btn--primary" @click="showInvite = false">Close</button>
               </div>
 
               <template v-else>
                 <div class="field">
                   <label for="fullName">Full name</label>
-                  <input
-                    id="fullName"
-                    v-model="invite.fullName"
-                    class="input"
-                    placeholder="Juan Dela Cruz"
-                  />
+                  <input id="fullName" v-model="invite.fullName" class="input" placeholder="Juan Dela Cruz" />
                 </div>
 
                 <div class="field">
                   <label for="phone">Phone number (for SMS)</label>
-                  <input
-                    id="phone"
-                    v-model="invite.phone"
-                    type="tel"
-                    inputmode="tel"
-                    class="input"
-                    placeholder="+63 917 123 4567"
-                  />
+                  <input id="phone" v-model="invite.phone" type="tel" inputmode="tel" class="input" placeholder="+63 917 123 4567" />
                 </div>
 
                 <div class="field">
                   <label for="barangay">Barangay</label>
-                  <input
-                    id="barangay"
-                    v-model="invite.barangay"
-                    class="input"
-                    placeholder="Ilaya (Poblacion)"
-                  />
+                  <input id="barangay" v-model="invite.barangay" class="input" placeholder="Ilaya (Poblacion)" />
                 </div>
 
                 <div class="field">
                   <label for="agency">Agency (optional)</label>
-                  <input
-                    id="agency"
-                    v-model="invite.agency"
-                    class="input"
-                    placeholder="Barangay Ilaya"
-                  />
+                  <input id="agency" v-model="invite.agency" class="input" placeholder="Barangay Ilaya" />
                 </div>
 
-                <p v-if="inviteError" class="error-text invite-error">
-                  {{ inviteError }}
-                </p>
+                <p v-if="inviteError" class="error-text invite-error">{{ inviteError }}</p>
 
-                <button
-                  class="btn btn--primary"
-                  :disabled="inviting"
-                  @click="submitInvite"
-                >
+                <button class="btn btn--primary" :disabled="inviting" @click="submitInvite">
                   {{ inviting ? 'Creating…' : 'Create & Send SMS' }}
                 </button>
               </template>
@@ -425,33 +329,38 @@ function initials(name) {
 <style scoped>
 .users-tab { display: flex; flex-direction: column; padding-bottom: 20px; }
 
+/* Header */
 .head {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 12px;
   margin-bottom: 16px;
 }
+.head-text { min-width: 0; }
 .head .h1 { font-size: 1.5rem; }
 .head .muted { margin-top: 4px; }
 
 .invite-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 10px 14px;
+  padding: 11px 16px;
+  min-height: 44px;
   border-radius: 10px;
   background: #3b82f6;
   color: #fff;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   font-weight: 650;
   border: none;
   cursor: pointer;
-  flex-shrink: 0;
-  transition: all 0.15s ease;
+  align-self: flex-start;
+  transition: transform 0.15s ease;
+  font-family: inherit;
 }
 .invite-btn:active { transform: scale(0.96); }
 
+/* Chips */
 .chips {
   display: flex;
   gap: 6px;
@@ -473,20 +382,19 @@ function initials(name) {
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.15s ease;
+  font-family: inherit;
 }
 .chip:active { transform: scale(0.96); }
 .chip--on { background: #3b82f6; border-color: #3b82f6; color: #fff; }
 
+/* Toolbar */
 .toolbar {
   display: flex;
   flex-direction: column;
   gap: 8px;
   margin-bottom: 16px;
 }
-@media (min-width: 640px) {
-  .toolbar { flex-direction: row; align-items: center; }
-}
-.search-wrap { position: relative; flex: 1; }
+.search-wrap { position: relative; flex: 1; min-width: 0; }
 .search-icon {
   position: absolute;
   left: 14px;
@@ -518,8 +426,10 @@ function initials(name) {
   font-size: 0.875rem;
   cursor: pointer;
   appearance: none;
+  font-family: inherit;
 }
 
+/* States */
 .state-block {
   background: var(--bg-elev);
   border: 1px dashed var(--border);
@@ -541,11 +451,12 @@ function initials(name) {
 .state-title { font-size: 0.9375rem; font-weight: 650; margin-bottom: 4px; }
 .state-text { line-height: 1.5; max-width: 30ch; margin-inline: auto; }
 
-.list {
+/* Grid */
+.grid {
   list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
 }
 
 .user-card {
@@ -554,6 +465,8 @@ function initials(name) {
   border-radius: var(--radius);
   padding: 14px 16px;
   transition: opacity 0.15s ease;
+  display: flex;
+  flex-direction: column;
 }
 .user-card--disabled { opacity: 0.55; }
 
@@ -592,8 +505,13 @@ function initials(name) {
   gap: 6px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
+  flex: 1;
 }
-.detail-row { display: flex; justify-content: space-between; gap: 12px; }
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
 .detail-label { color: var(--text-muted); flex-shrink: 0; }
 .detail-value {
   color: var(--text);
@@ -615,14 +533,14 @@ function initials(name) {
   border: none;
   cursor: pointer;
   transition: all 0.15s ease;
+  font-family: inherit;
 }
 .mini-btn:active { transform: scale(0.96); }
-.mini-btn--danger {
-  background: rgba(239, 68, 68, 0.14);
-  color: #ef4444;
-}
+.mini-btn--danger { background: rgba(239, 68, 68, 0.14); color: #ef4444; }
 
-/* MODAL */
+/* ============================================================
+   MODAL — bottom sheet on mobile, centered dialog on desktop
+   ============================================================ */
 .modal-root {
   position: fixed;
   inset: 0;
@@ -706,10 +624,7 @@ function initials(name) {
   gap: 12px;
   padding: 6px 0;
 }
-.cred-row + .cred-row {
-  border-top: 1px solid var(--border);
-  margin-top: 4px;
-}
+.cred-row + .cred-row { border-top: 1px solid var(--border); margin-top: 4px; }
 .cred-label {
   font-size: 0.6875rem;
   font-weight: 700;
@@ -728,8 +643,54 @@ function initials(name) {
 
 .invite-error { margin-bottom: 12px; text-align: center; }
 
-.fade-enter-active,
-.fade-leave-active { transition: opacity 0.2s ease; }
-.fade-enter-from,
-.fade-leave-to { opacity: 0; }
+.fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (min-width: 480px) {
+  .grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (min-width: 640px) {
+  .head {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+  }
+  .head .h1 { font-size: 1.75rem; }
+  .invite-btn { align-self: flex-start; }
+
+  .toolbar { flex-direction: row; align-items: center; }
+  .filter-select { min-width: 180px; }
+
+  .modal-root { justify-content: center; align-items: center; padding: 24px; }
+  .modal-sheet {
+    border-radius: 20px;
+    border-bottom: 1px solid var(--border);
+    width: 100%;
+    max-width: 520px;
+    max-height: 88dvh;
+    animation: dialog-in 0.2s ease;
+  }
+  @keyframes dialog-in {
+    from { transform: scale(0.95); opacity: 0; }
+    to   { transform: scale(1);    opacity: 1; }
+  }
+  .modal-grabber { display: none; }
+  .modal-head { padding: 20px 24px 16px; }
+  .modal-body { padding: 20px 24px 24px; }
+}
+
+@media (min-width: 1024px) {
+  .head .h1 { font-size: 2rem; }
+  .head .muted { font-size: 1rem; }
+  .grid { grid-template-columns: repeat(3, 1fr); gap: 14px; }
+}
+
+@media (min-width: 1440px) {
+  .grid { grid-template-columns: repeat(4, 1fr); gap: 16px; }
+}
 </style>

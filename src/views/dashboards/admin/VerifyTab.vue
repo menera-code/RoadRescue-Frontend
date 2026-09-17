@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import {
   doc,
   updateDoc,
@@ -13,77 +13,45 @@ import {
   STATUS_GROUPS,
 } from '@/composables/useIncidents'
 import MediaGallery from '@/components/MediaGallery.vue'
-import {
-  BARANGAY_NAMES,
-  searchBarangays,
-} from '@/data/barangays'
+import { searchBarangays } from '@/data/barangays'
 
 const auth = useAuthStore()
 
-// ---------------------------------------------------------------------------
-// SUBSCRIPTIONS
-// ---------------------------------------------------------------------------
 const { incidents: unverified, loading } = useIncidents({
   statuses: STATUS_GROUPS.UNVERIFIED,
   scope: 'all',
 })
 
-// ---------------------------------------------------------------------------
-// VIEW MODE
-// ---------------------------------------------------------------------------
-const viewMode = ref('list') // 'list' | 'detail'
+const viewMode = ref('list')
 const selectedIncident = ref(null)
 
-// ---------------------------------------------------------------------------
-// LIST VIEW — search + filter
-// ---------------------------------------------------------------------------
 const searchQuery = ref('')
 
 const filtered = computed(() => {
   if (!searchQuery.value.trim()) return unverified.value
   const q = searchQuery.value.toLowerCase()
-  return unverified.value.filter((inc) => {
-    return (
-      (inc.type || '').toLowerCase().includes(q) ||
-      (inc.description || '').toLowerCase().includes(q) ||
-      (inc.barangay || '').toLowerCase().includes(q) ||
-      (inc.citizenName || '').toLowerCase().includes(q)
-    )
-  })
+  return unverified.value.filter((inc) =>
+    (inc.type || '').toLowerCase().includes(q) ||
+    (inc.description || '').toLowerCase().includes(q) ||
+    (inc.barangay || '').toLowerCase().includes(q) ||
+    (inc.citizenName || '').toLowerCase().includes(q)
+  )
 })
 
-// ---------------------------------------------------------------------------
-// TYPE HELPERS
-// ---------------------------------------------------------------------------
 const TYPE_ICONS = {
-  flat_tire:       '🛞',
-  battery:         '🔋',
-  fuel:            '⛽',
-  stalled_vehicle: '🛑',
-  minor_collision: '🚗',
-  major_collision: '💥',
-  vehicle_fire:    '🔥',
-  road_hazard:     '⚠️',
+  flat_tire: '🛞', battery: '🔋', fuel: '⛽',
+  stalled_vehicle: '🛑', minor_collision: '🚗', major_collision: '💥',
+  vehicle_fire: '🔥', road_hazard: '⚠️',
 }
-
 const TYPE_LABELS = {
-  flat_tire:       'Flat Tire',
-  battery:         'Dead Battery',
-  fuel:            'Out of Fuel',
-  stalled_vehicle: 'Stalled Vehicle',
-  minor_collision: 'Minor Crash',
-  major_collision: 'Major Crash',
-  vehicle_fire:    'Vehicle Fire',
-  road_hazard:     'Road Hazard',
+  flat_tire: 'Flat Tire', battery: 'Dead Battery', fuel: 'Out of Fuel',
+  stalled_vehicle: 'Stalled Vehicle', minor_collision: 'Minor Crash',
+  major_collision: 'Major Crash', vehicle_fire: 'Vehicle Fire',
+  road_hazard: 'Road Hazard',
 }
 
-function typeIcon(type) {
-  return TYPE_ICONS[type] || '❓'
-}
-
-function typeLabel(type) {
-  return TYPE_LABELS[type] || 'Incident'
-}
+function typeIcon(t) { return TYPE_ICONS[t] || '❓' }
+function typeLabel(t) { return TYPE_LABELS[t] || 'Incident' }
 
 function timeAgo(date) {
   if (!date) return ''
@@ -97,35 +65,20 @@ function timeAgo(date) {
 }
 
 function severityTone(sev) {
-  return {
-    low: 'low',
-    medium: 'medium',
-    high: 'high',
-    critical: 'critical',
-  }[sev] || 'medium'
+  return { low: 'low', medium: 'medium', high: 'high', critical: 'critical' }[sev] || 'medium'
 }
 
-// ---------------------------------------------------------------------------
-// DETAIL VIEW — barangay override + assignment preview
-// ---------------------------------------------------------------------------
 const detailBarangay = ref('')
 const detailBarangayQuery = ref('')
 const detailBarangayOpen = ref(false)
 const barangayOverride = ref(false)
+const filteredBarangays = computed(() => searchBarangays(detailBarangayQuery.value))
 
-const filteredBarangays = computed(() =>
-  searchBarangays(detailBarangayQuery.value)
-)
-
-// Assigned responder for the selected barangay (loaded from `barangays/{slug}`)
 const assignedResponder = ref(null)
 const assignedLoading = ref(false)
 
 async function loadAssignedResponder(barangayName) {
-  if (!barangayName) {
-    assignedResponder.value = null
-    return
-  }
+  if (!barangayName) { assignedResponder.value = null; return }
   assignedLoading.value = true
   try {
     const slug = slugify(barangayName)
@@ -133,29 +86,17 @@ async function loadAssignedResponder(barangayName) {
     if (snap.exists()) {
       const data = snap.data()
       assignedResponder.value = data.responderUid
-        ? {
-            uid: data.responderUid,
-            name: data.responderName || '',
-            phone: data.responderPhone || '',
-          }
+        ? { uid: data.responderUid, name: data.responderName || '', phone: data.responderPhone || '' }
         : null
-    } else {
-      assignedResponder.value = null
-    }
+    } else assignedResponder.value = null
   } catch (e) {
     console.error('[VerifyTab] failed to load assigned responder', e)
     assignedResponder.value = null
-  } finally {
-    assignedLoading.value = false
-  }
+  } finally { assignedLoading.value = false }
 }
 
 function slugify(name) {
-  return name
-    .toLowerCase()
-    .replace(/[()]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
+  return name.toLowerCase().replace(/[()]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 }
 
 function openDetail(incident) {
@@ -166,6 +107,7 @@ function openDetail(incident) {
   barangayOverride.value = false
   viewMode.value = 'detail'
   loadAssignedResponder(detailBarangay.value)
+  window.scrollTo({ top: 0, behavior: 'instant' })
 }
 
 function closeDetail() {
@@ -182,80 +124,52 @@ function pickBarangay(name) {
   loadAssignedResponder(name)
 }
 
-// ---------------------------------------------------------------------------
-// ACTIONS
-// ---------------------------------------------------------------------------
 const dispatching = ref(false)
 const rejecting = ref(false)
 const actionError = ref('')
 
-const canDispatch = computed(() => {
-  return (
-    !!detailBarangay.value &&
-    !!assignedResponder.value &&
-    !dispatching.value &&
-    !rejecting.value
-  )
-})
+const canDispatch = computed(() =>
+  !!detailBarangay.value && !!assignedResponder.value &&
+  !dispatching.value && !rejecting.value
+)
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
 
 async function onDispatch() {
-  if (!canDispatch.value) return
-  if (!selectedIncident.value) return
-
+  if (!canDispatch.value || !selectedIncident.value) return
   dispatching.value = true
   actionError.value = ''
-
   try {
-    // If admin overrode the barangay, save that first so the backend
-    // looks up the correct responder.
     if (barangayOverride.value) {
-      const ref = doc(db, 'incidents', selectedIncident.value.id)
-      await updateDoc(ref, {
+      await updateDoc(doc(db, 'incidents', selectedIncident.value.id), {
         barangay: detailBarangay.value,
         updatedAt: serverTimestamp(),
       })
     }
-
-    // Call the backend — handles assignment, SMS, and status flip
     const resp = await fetch(`${API_URL}/dispatch-incident`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        incident_id: selectedIncident.value.id,
-      }),
+      body: JSON.stringify({ incident_id: selectedIncident.value.id }),
     })
-
     const data = await resp.json()
-
     if (!resp.ok || !data.ok) {
       actionError.value = data.message || 'Dispatch failed. Try again.'
       return
     }
-
-    // Success
     closeDetail()
   } catch (e) {
     console.error('[VerifyTab] dispatch failed', e)
     actionError.value = 'Could not reach server. Try again.'
-  } finally {
-    dispatching.value = false
-  }
+  } finally { dispatching.value = false }
 }
 
 async function onReject() {
   if (!selectedIncident.value) return
-  if (!confirm('Reject this incident? It will not be sent to responders.')) {
-    return
-  }
-
+  if (!confirm('Reject this incident? It will not be sent to responders.')) return
   rejecting.value = true
   actionError.value = ''
-
   try {
-    const ref = doc(db, 'incidents', selectedIncident.value.id)
-    await updateDoc(ref, {
+    await updateDoc(doc(db, 'incidents', selectedIncident.value.id), {
       status: 'cancelled',
       cancelledBy: auth.user?.uid,
       cancelledByName: auth.profile?.fullName || '',
@@ -266,9 +180,7 @@ async function onReject() {
   } catch (e) {
     console.error('[VerifyTab] reject failed', e)
     actionError.value = 'Could not reject. Try again.'
-  } finally {
-    rejecting.value = false
-  }
+  } finally { rejecting.value = false }
 }
 </script>
 
@@ -279,16 +191,17 @@ async function onReject() {
          ============================================================ -->
     <template v-if="viewMode === 'list'">
       <header class="head">
-        <h1 class="h1">Verify</h1>
-        <p class="muted">
-          Review incoming reports and dispatch them to responders.
-        </p>
+        <div>
+          <h1 class="h1">Verify</h1>
+          <p class="muted">
+            Review incoming reports and dispatch them to responders.
+          </p>
+        </div>
       </header>
 
-      <!-- Count banner -->
       <div v-if="unverified.length" class="count-banner">
         <span class="count-number">{{ unverified.length }}</span>
-        <div>
+        <div class="count-body">
           <p class="count-title">
             {{ unverified.length === 1 ? 'incident needs' : 'incidents need' }}
             your review
@@ -299,17 +212,11 @@ async function onReject() {
         </div>
       </div>
 
-      <!-- Search (only if we have incidents) -->
       <div v-if="unverified.length > 1" class="search-wrap">
         <span class="search-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
             <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" />
-            <path
-              d="m20 20-3.5-3.5"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-            />
+            <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
           </svg>
         </span>
         <input
@@ -320,13 +227,11 @@ async function onReject() {
         />
       </div>
 
-      <!-- Loading -->
       <div v-if="loading && !unverified.length" class="state-block">
         <div class="state-spinner" aria-hidden="true" />
         <p class="tiny">Loading queue…</p>
       </div>
 
-      <!-- Empty -->
       <div v-else-if="!unverified.length" class="state-block">
         <div class="state-icon" aria-hidden="true">✅</div>
         <p class="state-title">All caught up</p>
@@ -335,29 +240,28 @@ async function onReject() {
         </p>
       </div>
 
-      <!-- No search results -->
       <div v-else-if="!filtered.length" class="state-block">
         <div class="state-icon" aria-hidden="true">🔍</div>
         <p class="state-title">No matches</p>
-        <p class="tiny state-text">
-          No incidents match "{{ searchQuery }}"
-        </p>
+        <p class="tiny state-text">No incidents match "{{ searchQuery }}"</p>
       </div>
 
-      <!-- List -->
       <ul v-else class="list">
         <li
           v-for="inc in filtered"
           :key="inc.id"
           class="card"
+          role="button"
+          tabindex="0"
           @click="openDetail(inc)"
+          @keydown.enter="openDetail(inc)"
         >
           <div class="card-head">
             <div class="card-type">
               <span class="card-type-icon" aria-hidden="true">
                 {{ typeIcon(inc.type) }}
               </span>
-              <div>
+              <div class="card-type-text">
                 <span class="card-type-label">{{ typeLabel(inc.type) }}</span>
                 <span
                   v-if="inc.ml?.predictedType"
@@ -377,262 +281,201 @@ async function onReject() {
             <span class="card-time tiny">{{ timeAgo(inc.createdAt) }}</span>
           </div>
 
-          <p v-if="inc.description" class="card-desc">
-            {{ inc.description }}
-          </p>
+          <p v-if="inc.description" class="card-desc">{{ inc.description }}</p>
 
           <div class="card-meta">
             <span v-if="inc.barangay" class="card-meta-item">
-              📍 {{ inc.barangay }}
+              <span aria-hidden="true">📍</span> {{ inc.barangay }}
             </span>
             <span v-if="inc.citizenName" class="card-meta-item">
-              👤 {{ inc.citizenName }}
+              <span aria-hidden="true">👤</span> {{ inc.citizenName }}
             </span>
           </div>
 
           <div class="card-actions-preview">
-            <span class="tiny">Tap to review &amp; dispatch →</span>
+            <span class="tiny">Tap to review &amp; dispatch</span>
+            <span class="tiny card-arrow" aria-hidden="true">→</span>
           </div>
         </li>
       </ul>
     </template>
 
     <!-- ============================================================
-         DETAIL VIEW
+         DETAIL VIEW — mobile stack, desktop split
          ============================================================ -->
     <template v-else>
       <header class="head head--detail">
-        <button
-          class="back-btn"
-          aria-label="Back to list"
-          @click="closeDetail"
-        >
+        <button class="back-btn" aria-label="Back to list" @click="closeDetail">
           <svg viewBox="0 0 24 24" fill="none" width="20" height="20">
-            <path
-              d="m15 18-6-6 6-6"
-              stroke="currentColor"
-              stroke-width="2.5"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
+            <path d="m15 18-6-6 6-6" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
         <h1 class="h2">Review Incident</h1>
       </header>
 
-      <template v-if="selectedIncident">
-        <!-- ---------- Media gallery ---------- -->
-        <MediaGallery
-          v-if="
-            selectedIncident.photoUrls?.length || selectedIncident.videoUrl
-          "
-          :photo-urls="selectedIncident.photoUrls || []"
-          :video-url="selectedIncident.videoUrl || null"
-          mode="full"
-          class="detail-media"
-        />
-
-        <!-- ---------- Citizen report ---------- -->
-        <div class="detail-card">
-          <div class="detail-row">
-            <span class="detail-label">Type</span>
-            <span class="detail-value">
-              {{ typeIcon(selectedIncident.type) }}
-              {{ typeLabel(selectedIncident.type) }}
-            </span>
-          </div>
-          <div v-if="selectedIncident.description" class="detail-row">
-            <span class="detail-label">Description</span>
-            <span class="detail-value detail-value--multiline">
-              {{ selectedIncident.description }}
-            </span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">Reported by</span>
-            <span class="detail-value">{{ selectedIncident.citizenName || '—' }}</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">Phone</span>
-            <span class="detail-value">{{ selectedIncident.citizenPhone || '—' }}</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">Submitted</span>
-            <span class="detail-value">{{ timeAgo(selectedIncident.createdAt) }}</span>
+      <div v-if="selectedIncident" class="detail-layout">
+        <!-- LEFT COLUMN (media) -->
+        <div class="detail-col detail-col--media">
+          <MediaGallery
+            v-if="selectedIncident.photoUrls?.length || selectedIncident.videoUrl"
+            :photo-urls="selectedIncident.photoUrls || []"
+            :video-url="selectedIncident.videoUrl || null"
+            mode="full"
+          />
+          <div v-else class="no-media">
+            <div class="no-media-icon" aria-hidden="true">📷</div>
+            <p class="tiny">No media attached to this report.</p>
           </div>
         </div>
 
-        <!-- ---------- ML analysis ---------- -->
-        <div v-if="selectedIncident.ml" class="detail-card detail-card--ml">
-          <div class="ml-head">
-            <span class="ml-badge">🤖 AI Analysis</span>
-            <span
-              v-if="selectedIncident.ml.reportedTypeMatches === true"
-              class="ml-match"
-            >
-              ✓ Matches citizen's pick
-            </span>
-            <span
-              v-else-if="selectedIncident.ml.reportedTypeMatches === false"
-              class="ml-mismatch"
-            >
-              ⚠ Disagrees with citizen's pick
-            </span>
-          </div>
-
-          <div class="detail-row">
-            <span class="detail-label">Predicted type</span>
-            <span class="detail-value">
-              {{ typeLabel(selectedIncident.ml.predictedType) }}
-            </span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">Severity</span>
-            <span
-              class="severity-chip"
-              :class="`severity-chip--${severityTone(selectedIncident.ml.predictedSeverity)}`"
-            >
-              {{ selectedIncident.ml.predictedSeverity }}
-            </span>
-          </div>
-          <div
-            v-if="selectedIncident.ml.confidence"
-            class="detail-row"
-          >
-            <span class="detail-label">Confidence</span>
-            <span class="detail-value">
-              {{ Math.round(selectedIncident.ml.confidence * 100) }}%
-              <span class="tiny" v-if="selectedIncident.ml.sources">
-                · {{ selectedIncident.ml.sources.join(', ') }}
+        <!-- RIGHT COLUMN (info + actions) -->
+        <div class="detail-col detail-col--info">
+          <!-- Citizen report -->
+          <div class="detail-card">
+            <div class="detail-row">
+              <span class="detail-label">Type</span>
+              <span class="detail-value">
+                {{ typeIcon(selectedIncident.type) }}
+                {{ typeLabel(selectedIncident.type) }}
               </span>
-            </span>
-          </div>
-          <div
-            v-if="selectedIncident.ml.keywords?.length"
-            class="detail-row"
-          >
-            <span class="detail-label">Keywords</span>
-            <span class="detail-value">
-              <span
-                v-for="kw in selectedIncident.ml.keywords"
-                :key="kw"
-                class="keyword-chip"
-              >
-                {{ kw }}
+            </div>
+            <div v-if="selectedIncident.description" class="detail-row">
+              <span class="detail-label">Description</span>
+              <span class="detail-value detail-value--multiline">
+                {{ selectedIncident.description }}
               </span>
-            </span>
-          </div>
-        </div>
-
-        <!-- ---------- Barangay selection ---------- -->
-        <div class="detail-card">
-          <p class="detail-section-title">Dispatch to barangay</p>
-
-          <div v-if="detailBarangay && !detailBarangayOpen" class="barangay-chip-row">
-            <span class="barangay-chip-lg">
-              <span aria-hidden="true">📍</span>
-              {{ detailBarangay }}
-              <button
-                type="button"
-                class="barangay-edit"
-                aria-label="Change barangay"
-                @click="
-                  detailBarangayOpen = true;
-                  detailBarangayQuery = '';
-                "
-              >
-                Edit
-              </button>
-            </span>
-            <p v-if="!barangayOverride" class="tiny">
-              Auto-detected from citizen's GPS
-            </p>
-            <p v-else class="tiny barangay-override-note">
-              Overridden by you
-            </p>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Reported by</span>
+              <span class="detail-value">{{ selectedIncident.citizenName || '—' }}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Phone</span>
+              <span class="detail-value">{{ selectedIncident.citizenPhone || '—' }}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Submitted</span>
+              <span class="detail-value">{{ timeAgo(selectedIncident.createdAt) }}</span>
+            </div>
           </div>
 
-          <div v-else class="barangay-picker">
-            <input
-              v-model="detailBarangayQuery"
-              type="text"
-              class="input"
-              placeholder="Search barangay…"
-              @focus="detailBarangayOpen = true"
-            />
-            <ul
-              v-if="detailBarangayQuery && filteredBarangays.length"
-              class="barangay-list"
-            >
-              <li
-                v-for="b in filteredBarangays.slice(0, 8)"
-                :key="b"
-                class="barangay-item"
-                @click="pickBarangay(b)"
-              >
-                {{ b }}
-              </li>
-            </ul>
-          </div>
-
-          <!-- Assigned responder preview -->
-          <div class="responder-preview">
-            <p class="detail-section-title">Assigned responder</p>
-
-            <div v-if="assignedLoading" class="responder-loading">
-              <div class="state-spinner state-spinner--sm" />
-              <span class="tiny">Checking assignment…</span>
+          <!-- ML analysis -->
+          <div v-if="selectedIncident.ml" class="detail-card detail-card--ml">
+            <div class="ml-head">
+              <span class="ml-badge">🤖 AI Analysis</span>
+              <span v-if="selectedIncident.ml.reportedTypeMatches === true" class="ml-match">✓ Matches</span>
+              <span v-else-if="selectedIncident.ml.reportedTypeMatches === false" class="ml-mismatch">⚠ Differs</span>
             </div>
 
-            <div v-else-if="assignedResponder" class="responder-assigned">
-              <span class="responder-icon" aria-hidden="true">👤</span>
-              <div class="responder-body">
-                <p class="responder-name">{{ assignedResponder.name }}</p>
-                <p class="tiny">{{ assignedResponder.phone || 'No phone on file' }}</p>
+            <div class="detail-row">
+              <span class="detail-label">Predicted type</span>
+              <span class="detail-value">{{ typeLabel(selectedIncident.ml.predictedType) }}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Severity</span>
+              <span class="severity-chip" :class="`severity-chip--${severityTone(selectedIncident.ml.predictedSeverity)}`">
+                {{ selectedIncident.ml.predictedSeverity }}
+              </span>
+            </div>
+            <div v-if="selectedIncident.ml.confidence" class="detail-row">
+              <span class="detail-label">Confidence</span>
+              <span class="detail-value">
+                {{ Math.round(selectedIncident.ml.confidence * 100) }}%
+                <span v-if="selectedIncident.ml.sources" class="tiny">
+                  · {{ selectedIncident.ml.sources.join(', ') }}
+                </span>
+              </span>
+            </div>
+            <div v-if="selectedIncident.ml.keywords?.length" class="detail-row">
+              <span class="detail-label">Keywords</span>
+              <span class="detail-value keyword-row">
+                <span v-for="kw in selectedIncident.ml.keywords" :key="kw" class="keyword-chip">{{ kw }}</span>
+              </span>
+            </div>
+          </div>
+
+          <!-- Barangay -->
+          <div class="detail-card">
+            <p class="detail-section-title">Dispatch to barangay</p>
+
+            <div v-if="detailBarangay && !detailBarangayOpen" class="barangay-chip-row">
+              <span class="barangay-chip-lg">
+                <span aria-hidden="true">📍</span>
+                {{ detailBarangay }}
+                <button
+                  type="button"
+                  class="barangay-edit"
+                  aria-label="Change barangay"
+                  @click="detailBarangayOpen = true; detailBarangayQuery = ''"
+                >Edit</button>
+              </span>
+              <p v-if="!barangayOverride" class="tiny">Auto-detected from citizen's GPS</p>
+              <p v-else class="tiny barangay-override-note">Overridden by you</p>
+            </div>
+
+            <div v-else class="barangay-picker">
+              <input
+                v-model="detailBarangayQuery"
+                type="text"
+                class="input"
+                placeholder="Search barangay…"
+                @focus="detailBarangayOpen = true"
+              />
+              <ul v-if="detailBarangayQuery && filteredBarangays.length" class="barangay-list">
+                <li
+                  v-for="b in filteredBarangays.slice(0, 8)"
+                  :key="b"
+                  class="barangay-item"
+                  @click="pickBarangay(b)"
+                >{{ b }}</li>
+              </ul>
+            </div>
+
+            <!-- Assigned responder -->
+            <div class="responder-preview">
+              <p class="detail-section-title">Assigned responder</p>
+
+              <div v-if="assignedLoading" class="responder-loading">
+                <div class="state-spinner state-spinner--sm" />
+                <span class="tiny">Checking assignment…</span>
               </div>
-              <span class="responder-ok" aria-label="Assigned">✓</span>
-            </div>
 
-            <div v-else class="responder-missing">
-              <span class="responder-icon" aria-hidden="true">⚠️</span>
-              <div>
-                <p class="responder-name">No responder assigned</p>
-                <p class="tiny">
-                  Assign one in the Barangays tab before dispatching.
-                </p>
+              <div v-else-if="assignedResponder" class="responder-assigned">
+                <span class="responder-icon" aria-hidden="true">👤</span>
+                <div class="responder-body">
+                  <p class="responder-name">{{ assignedResponder.name }}</p>
+                  <p class="tiny">{{ assignedResponder.phone || 'No phone on file' }}</p>
+                </div>
+                <span class="responder-ok" aria-label="Assigned">✓</span>
+              </div>
+
+              <div v-else class="responder-missing">
+                <span class="responder-icon" aria-hidden="true">⚠️</span>
+                <div>
+                  <p class="responder-name">No responder assigned</p>
+                  <p class="tiny">Assign one in the Barangays tab before dispatching.</p>
+                </div>
               </div>
             </div>
           </div>
+
+          <p v-if="actionError" class="error-banner">{{ actionError }}</p>
+
+          <div class="detail-actions">
+            <button class="btn btn--ghost" :disabled="rejecting || dispatching" @click="onReject">
+              {{ rejecting ? 'Rejecting…' : 'Reject' }}
+            </button>
+            <button class="btn btn--primary detail-dispatch" :disabled="!canDispatch" @click="onDispatch">
+              {{
+                dispatching ? 'Dispatching…'
+                  : assignedResponder ? 'Verify & Dispatch'
+                  : 'No Responder Assigned'
+              }}
+            </button>
+          </div>
         </div>
-
-        <!-- Error -->
-        <p v-if="actionError" class="error-banner">{{ actionError }}</p>
-
-        <div class="spacer" />
-
-        <!-- Actions -->
-        <div class="detail-actions">
-          <button
-            class="btn btn--ghost"
-            :disabled="rejecting || dispatching"
-            @click="onReject"
-          >
-            {{ rejecting ? 'Rejecting…' : 'Reject' }}
-          </button>
-          <button
-            class="btn btn--primary detail-dispatch"
-            :disabled="!canDispatch"
-            @click="onDispatch"
-          >
-            {{
-              dispatching
-                ? 'Dispatching…'
-                : assignedResponder
-                ? 'Verify & Dispatch'
-                : 'No Responder Assigned'
-            }}
-          </button>
-        </div>
-      </template>
+      </div>
     </template>
   </section>
 </template>
@@ -645,16 +488,9 @@ async function onReject() {
 }
 
 /* ---------- Header ---------- */
-.head {
-  margin-bottom: 16px;
-}
-.head .h1 {
-  font-size: 1.5rem;
-}
-.head .muted {
-  margin-top: 4px;
-  line-height: 1.5;
-}
+.head { margin-bottom: 16px; }
+.head .h1 { font-size: 1.5rem; }
+.head .muted { margin-top: 4px; line-height: 1.5; }
 
 .head--detail {
   display: flex;
@@ -674,11 +510,9 @@ async function onReject() {
   place-items: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: all 0.15s ease;
+  transition: transform 0.15s ease;
 }
-.back-btn:active {
-  transform: scale(0.92);
-}
+.back-btn:active { transform: scale(0.92); }
 
 /* ---------- Count banner ---------- */
 .count-banner {
@@ -700,22 +534,12 @@ async function onReject() {
   line-height: 1;
   min-width: 40px;
 }
-.count-title {
-  font-size: 0.9375rem;
-  font-weight: 700;
-  margin-bottom: 2px;
-}
-.count-text {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  line-height: 1.4;
-}
+.count-body { min-width: 0; flex: 1; }
+.count-title { font-size: 0.9375rem; font-weight: 700; margin-bottom: 2px; }
+.count-text { font-size: 0.75rem; color: var(--text-muted); line-height: 1.4; }
 
 /* ---------- Search ---------- */
-.search-wrap {
-  position: relative;
-  margin-bottom: 14px;
-}
+.search-wrap { position: relative; margin-bottom: 14px; }
 .search-icon {
   position: absolute;
   left: 14px;
@@ -736,9 +560,7 @@ async function onReject() {
   outline: none;
   transition: border-color 0.15s ease;
 }
-.search-input:focus {
-  border-color: #3b82f6;
-}
+.search-input:focus { border-color: #3b82f6; }
 
 /* ---------- States ---------- */
 .state-block {
@@ -757,37 +579,17 @@ async function onReject() {
   animation: spin 0.8s linear infinite;
   margin: 0 auto 12px;
 }
-.state-spinner--sm {
-  width: 16px;
-  height: 16px;
-  border-width: 2px;
-  margin: 0;
-}
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-.state-icon {
-  font-size: 2rem;
-  line-height: 1;
-  margin-bottom: 10px;
-  opacity: 0.8;
-}
-.state-title {
-  font-size: 0.9375rem;
-  font-weight: 650;
-  margin-bottom: 4px;
-}
-.state-text {
-  line-height: 1.5;
-  max-width: 32ch;
-  margin-inline: auto;
-}
+.state-spinner--sm { width: 16px; height: 16px; border-width: 2px; margin: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.state-icon { font-size: 2rem; line-height: 1; margin-bottom: 10px; opacity: 0.8; }
+.state-title { font-size: 0.9375rem; font-weight: 650; margin-bottom: 4px; }
+.state-text { line-height: 1.5; max-width: 32ch; margin-inline: auto; }
 
 /* ---------- List ---------- */
 .list {
   list-style: none;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr;
   gap: 12px;
 }
 
@@ -816,23 +618,15 @@ async function onReject() {
   gap: 10px;
   margin-bottom: 10px;
 }
-.card-type {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  min-width: 0;
-}
+.card-type { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
 .card-type-icon {
   font-size: 1.25rem;
   line-height: 1;
   flex-shrink: 0;
   margin-top: 2px;
 }
-.card-type-label {
-  font-size: 1rem;
-  font-weight: 700;
-  display: block;
-}
+.card-type-text { min-width: 0; }
+.card-type-label { font-size: 1rem; font-weight: 700; display: block; }
 .card-type-pred {
   display: block;
   font-size: 0.6875rem;
@@ -840,16 +634,9 @@ async function onReject() {
   margin-top: 3px;
   font-weight: 600;
 }
-.card-type-pred--match {
-  color: var(--accent);
-}
-.card-type-pred--mismatch {
-  color: #f59e0b;
-}
-.card-time {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
+.card-type-pred--match { color: var(--accent); }
+.card-type-pred--mismatch { color: #f59e0b; }
+.card-time { flex-shrink: 0; white-space: nowrap; }
 
 .card-desc {
   font-size: 0.875rem;
@@ -870,29 +657,52 @@ async function onReject() {
   margin-bottom: 10px;
 }
 .card-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 0.75rem;
   color: var(--text-muted);
 }
 
 .card-actions-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding-top: 10px;
   border-top: 1px solid var(--border);
-  text-align: right;
   color: #3b82f6;
   font-weight: 600;
 }
-
-/* ---------- Detail view ---------- */
-.detail-media {
-  margin-bottom: 16px;
+.card-arrow {
+  transition: transform 0.15s ease;
 }
+.card:active .card-arrow { transform: translateX(3px); }
+
+/* ---------- Detail layout ---------- */
+.detail-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.detail-col { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+
+.no-media {
+  background: var(--bg-elev);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+.no-media-icon { font-size: 2rem; margin-bottom: 8px; opacity: 0.6; }
 
 .detail-card {
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 14px 16px;
-  margin-bottom: 12px;
 }
 
 .detail-card--ml {
@@ -921,16 +731,8 @@ async function onReject() {
   padding: 4px 10px;
   border-radius: 99px;
 }
-.ml-match {
-  font-size: 0.6875rem;
-  font-weight: 700;
-  color: var(--accent);
-}
-.ml-mismatch {
-  font-size: 0.6875rem;
-  font-weight: 700;
-  color: #f59e0b;
-}
+.ml-match { font-size: 0.6875rem; font-weight: 700; color: var(--accent); }
+.ml-mismatch { font-size: 0.6875rem; font-weight: 700; color: #f59e0b; }
 
 .detail-row {
   display: flex;
@@ -938,14 +740,8 @@ async function onReject() {
   gap: 12px;
   padding: 10px 0;
 }
-.detail-row + .detail-row {
-  border-top: 1px solid var(--border);
-}
-.detail-label {
-  font-size: 0.8125rem;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
+.detail-row + .detail-row { border-top: 1px solid var(--border); }
+.detail-label { font-size: 0.8125rem; color: var(--text-muted); flex-shrink: 0; }
 .detail-value {
   font-size: 0.9375rem;
   color: var(--text);
@@ -953,11 +749,7 @@ async function onReject() {
   word-break: break-word;
   min-width: 0;
 }
-.detail-value--multiline {
-  text-align: left;
-  line-height: 1.5;
-  max-width: 70%;
-}
+.detail-value--multiline { text-align: left; line-height: 1.5; max-width: 70%; }
 
 .severity-chip {
   font-size: 0.6875rem;
@@ -967,19 +759,23 @@ async function onReject() {
   padding: 3px 10px;
   border-radius: 6px;
 }
-.severity-chip--low      { color: #22c55e; background: rgba(34, 197, 94, 0.14); }
-.severity-chip--medium   { color: #f59e0b; background: rgba(245, 158, 11, 0.14); }
-.severity-chip--high     { color: #ef4444; background: rgba(239, 68, 68, 0.14); }
+.severity-chip--low { color: #22c55e; background: rgba(34, 197, 94, 0.14); }
+.severity-chip--medium { color: #f59e0b; background: rgba(245, 158, 11, 0.14); }
+.severity-chip--high { color: #ef4444; background: rgba(239, 68, 68, 0.14); }
 .severity-chip--critical { color: #fff; background: #dc2626; }
 
+.keyword-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
 .keyword-chip {
-  display: inline-block;
   font-size: 0.6875rem;
   background: var(--bg-input);
   color: var(--text-muted);
   padding: 3px 8px;
   border-radius: 6px;
-  margin: 0 4px 4px 0;
 }
 
 .detail-section-title {
@@ -991,10 +787,8 @@ async function onReject() {
   margin-bottom: 10px;
 }
 
-/* ---------- Barangay chip + picker ---------- */
-.barangay-chip-row {
-  margin-bottom: 16px;
-}
+/* Barangay chip */
+.barangay-chip-row { margin-bottom: 16px; }
 .barangay-chip-lg {
   display: inline-flex;
   align-items: center;
@@ -1020,16 +814,9 @@ async function onReject() {
   color: #3b82f6;
   cursor: pointer;
 }
-.barangay-override-note {
-  color: #f59e0b;
-  margin-top: 6px;
-  padding-left: 4px;
-}
+.barangay-override-note { color: #f59e0b; margin-top: 6px; padding-left: 4px; }
 
-.barangay-picker {
-  position: relative;
-  margin-bottom: 16px;
-}
+.barangay-picker { position: relative; margin-bottom: 16px; }
 .barangay-list {
   position: absolute;
   top: 100%;
@@ -1046,29 +833,13 @@ async function onReject() {
   list-style: none;
   padding: 4px;
 }
-.barangay-item {
-  padding: 10px 12px;
-  border-radius: 8px;
-  font-size: 0.9375rem;
-  cursor: pointer;
-}
-.barangay-item:hover,
-.barangay-item:active {
-  background: var(--bg-input);
-}
+.barangay-item { padding: 10px 12px; border-radius: 8px; font-size: 0.9375rem; cursor: pointer; }
+.barangay-item:hover, .barangay-item:active { background: var(--bg-input); }
 
-/* ---------- Responder preview ---------- */
-.responder-preview {
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-}
-.responder-loading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.responder-assigned,
-.responder-missing {
+/* Responder preview */
+.responder-preview { padding-top: 14px; border-top: 1px solid var(--border); }
+.responder-loading { display: flex; align-items: center; gap: 8px; }
+.responder-assigned, .responder-missing {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1083,19 +854,9 @@ async function onReject() {
   background: rgba(245, 158, 11, 0.1);
   border: 1px solid rgba(245, 158, 11, 0.3);
 }
-.responder-icon {
-  font-size: 1.25rem;
-  flex-shrink: 0;
-}
-.responder-body {
-  flex: 1;
-  min-width: 0;
-}
-.responder-name {
-  font-size: 0.9375rem;
-  font-weight: 700;
-  margin-bottom: 2px;
-}
+.responder-icon { font-size: 1.25rem; flex-shrink: 0; }
+.responder-body { flex: 1; min-width: 0; }
+.responder-name { font-size: 0.9375rem; font-weight: 700; margin-bottom: 2px; }
 .responder-ok {
   color: var(--accent);
   font-size: 1.5rem;
@@ -1103,7 +864,7 @@ async function onReject() {
   line-height: 1;
 }
 
-/* ---------- Actions ---------- */
+/* Actions */
 .error-banner {
   background: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.3);
@@ -1111,11 +872,6 @@ async function onReject() {
   padding: 10px 14px;
   font-size: 0.8125rem;
   color: var(--danger);
-  margin-bottom: 14px;
-}
-.spacer {
-  flex: 1;
-  min-height: 12px;
 }
 
 .detail-actions {
@@ -1123,14 +879,52 @@ async function onReject() {
   gap: 10px;
   padding-top: 8px;
 }
-.detail-actions .btn--ghost {
-  flex: 0.6;
+.detail-actions .btn--ghost { flex: 0.6; }
+.detail-dispatch { flex: 1; }
+.detail-dispatch:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ============================================================
+   RESPONSIVE — tablet 2-col list, desktop 2-col detail
+   ============================================================ */
+
+/* Tablet: list goes 2-col */
+@media (min-width: 640px) {
+  .head .h1 { font-size: 1.75rem; }
+  .list { grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  .count-number { font-size: 2.5rem; }
 }
-.detail-dispatch {
-  flex: 1;
+
+/* Desktop: detail becomes 2-column split */
+@media (min-width: 1024px) {
+  .head .h1 { font-size: 2rem; }
+  .head .muted { font-size: 1rem; }
+  .head--detail { margin-bottom: 24px; }
+
+  .list { grid-template-columns: repeat(3, 1fr); gap: 16px; }
+
+  .detail-layout {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+    gap: 24px;
+    align-items: start;
+  }
+
+  .detail-col--media {
+    position: sticky;
+    top: 24px;
+  }
+
+  .detail-actions {
+    position: sticky;
+    bottom: 0;
+    background: var(--bg);
+    padding: 14px 0 0;
+    margin-top: 4px;
+  }
 }
-.detail-dispatch:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+
+/* Wide desktop — 4 columns for list, wider detail split */
+@media (min-width: 1440px) {
+  .list { grid-template-columns: repeat(4, 1fr); }
+  .detail-layout { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 32px; }
 }
 </style>
