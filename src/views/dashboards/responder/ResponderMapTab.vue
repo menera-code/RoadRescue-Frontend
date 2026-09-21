@@ -1,7 +1,6 @@
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import * as maplibregl from 'maplibre-gl'
-import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 import { useAuthStore } from '@/stores/auth'
@@ -12,7 +11,10 @@ import {
   statusLabel,
 } from '@/composables/useIncidents'
 
-maplibregl.setWorkerUrl(maplibreWorkerUrl)
+// NOTE: maplibre-gl v3+ bundles its own worker — no setWorkerUrl needed.
+// The old worker import was removed because the path no longer exists in
+// v3+, and the bad asset request was falling through to the SPA fallback
+// (returning index.html with MIME text/html), which killed the bundle.
 
 // =========================================================================
 // CONSTANTS
@@ -252,7 +254,7 @@ function dropUserMarker(lng, lat) {
 
   const el = document.createElement('div')
   el.className = 'user-dot'
-  el.innerHTML = `<span class="user-dot__pulse"></span><span class="user-dot__core"></span>`
+  el.innerHTML = `<span class="user-dot__core"></span>`
 
   userMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
     .setLngLat([lng, lat])
@@ -277,24 +279,33 @@ function renderIncidentMarkers() {
 
   // Add or update markers
   for (const inc of mapIncidents.value) {
-    if (!inc.location) continue
+    const loc = inc.location
+    if (!loc) continue
 
-    const lng = inc.location.longitude
-    const lat = inc.location.latitude
+    const lat = Number(loc.latitude ?? loc.lat)
+    const lng = Number(loc.longitude ?? loc.lng)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
+    if (lat === 0 && lng === 0) continue
 
     let marker = incidentMarkers.get(inc.id)
     if (marker) {
-      marker.setLngLat([lng, lat])
-      // Update color/state if group changed
+      const cur = marker.getLngLat()
+      if (cur.lng !== lng || cur.lat !== lat) {
+        marker.setLngLat([lng, lat])
+      }
       const el = marker.getElement()
-      el.dataset.group = inc._group
+      const wanted = `incident-marker incident-marker--${inc._group}`
+      if (el.className !== wanted) el.className = wanted
     } else {
       const el = createIncidentMarkerElement(inc._group, inc.type)
       el.addEventListener('click', () => {
         selectedIncident.value = inc
       })
 
-      marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+      marker = new maplibregl.Marker({
+        element: el,
+        anchor: 'bottom',   // tip of the pin points at the coordinate
+      })
         .setLngLat([lng, lat])
         .addTo(map.value)
 
@@ -312,7 +323,7 @@ function createIncidentMarkerElement(group, type) {
     `${group === 'mine' ? 'Your incident' : 'Incident'} — tap for details`
   )
 
-    const icons = {
+  const icons = {
     flat_tire:       '🛞',
     battery:         '🔋',
     fuel:            '⛽',
@@ -325,14 +336,14 @@ function createIncidentMarkerElement(group, type) {
   const icon = icons[type] || '❓'
 
   el.innerHTML = `
-    <span class="incident-marker__pulse"></span>
-    <span class="incident-marker__icon">${icon}</span>
+    <span class="incident-marker__pulse" aria-hidden="true"></span>
+    <span class="incident-marker__icon" aria-hidden="true">${icon}</span>
+    <span class="incident-marker__tail" aria-hidden="true"></span>
   `
   return el
 }
 
 // Re-render markers when the incident list changes
-import { watch } from 'vue'
 watch(mapIncidents, () => {
   if (map.value?.loaded()) renderIncidentMarkers()
 })
@@ -1092,116 +1103,145 @@ function formatDistance(m) {
      GLOBAL STYLES (unscoped) — MapLibre DOM lives outside scoped
      ============================================================ -->
 <style>
-/* User location dot */
+/* ============================================================
+   USER LOCATION DOT — box-shadow pulse (no transform)
+   ============================================================ */
 .user-dot {
-  position: relative;
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-}
-
-.user-dot__core {
   position: relative;
   width: 14px;
   height: 14px;
+  pointer-events: none;
+}
+
+.user-dot__core {
+  position: absolute;
+  inset: 0;
   border-radius: 50%;
   background: #2f9e73;
   border: 2.5px solid #fff;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
-  z-index: 2;
+  animation: user-pulse 2s ease-out infinite;
 }
 
-.user-dot__pulse {
-  position: absolute;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: #2f9e73;
-  opacity: 0.5;
-  animation: pulse 1.8s ease-out infinite;
-  z-index: 1;
-}
-
-@keyframes pulse {
-  0% { transform: scale(0.6); opacity: 0.6; }
-  100% { transform: scale(2); opacity: 0; }
+@keyframes user-pulse {
+  0% {
+    box-shadow:
+      0 2px 6px rgba(0, 0, 0, 0.35),
+      0 0 0 0 rgba(47, 158, 115, 0.65);
+  }
+  70% {
+    box-shadow:
+      0 2px 6px rgba(0, 0, 0, 0.35),
+      0 0 0 18px rgba(47, 158, 115, 0);
+  }
+  100% {
+    box-shadow:
+      0 2px 6px rgba(0, 0, 0, 0.35),
+      0 0 0 18px rgba(47, 158, 115, 0);
+  }
 }
 
 /* ============================================================
-   INCIDENT MARKERS — the icons are DOM elements created by
-   MapLibre, so they must be styled with an unscoped <style>.
+   INCIDENT MARKERS — teardrop pins
+   Outer element stays transform-free so MapLibre's positioning
+   transform is never fought by a CSS transition.
    ============================================================ */
 .incident-marker {
   position: relative;
   width: 40px;
-  height: 40px;
+  height: 52px;
   padding: 0;
+  margin: 0;
   border: none;
   background: transparent;
   cursor: pointer;
-  display: grid;
-  place-items: center;
-  transition: transform 0.12s ease;
+  display: block;
   -webkit-tap-highlight-color: transparent;
+  outline: none;
 }
 
-.incident-marker:active { transform: scale(0.9); }
+/* Colour per group — set once, used by head + tail + pulse */
+.incident-marker--pending { --pin: #e63946; }
+.incident-marker--mine    { --pin: #2f9e73; }
+.incident-marker--other   { --pin: #f59e0b; }
 
-.incident-marker__icon {
-  position: relative;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 1rem;
-  color: #fff;
-  border: 2.5px solid #fff;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4);
-  z-index: 2;
-  transition: all 0.15s ease;
-}
-
+/* Soft pulse — anchored to head, not tail */
 .incident-marker__pulse {
   position: absolute;
-  width: 34px;
-  height: 34px;
+  top: 0;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  margin-left: -20px;
   border-radius: 50%;
-  opacity: 0.55;
+  background: var(--pin);
+  opacity: 0.45;
   z-index: 1;
+  pointer-events: none;
+  transform-origin: center;
   animation: marker-pulse 2s ease-out infinite;
 }
 
 @keyframes marker-pulse {
-  0%   { transform: scale(1);   opacity: 0.55; }
-  70%  { transform: scale(1.7); opacity: 0;    }
-  100% { transform: scale(1.7); opacity: 0;    }
+  0%   { transform: scale(1);   opacity: 0.45; }
+  70%  { transform: scale(1.8); opacity: 0;    }
+  100% { transform: scale(1.8); opacity: 0;    }
 }
 
-/* Pending — red (unclaimed, waiting for someone) */
-.incident-marker--pending .incident-marker__icon {
-  background: linear-gradient(160deg, #f14b57, #e63946 55%, #c42d39);
+/* Circular head */
+.incident-marker__icon {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  margin-left: -20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 1.125rem;
+  line-height: 1;
+  color: #fff;
+  background: var(--pin);
+  border: 3px solid #fff;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+  z-index: 2;
+  transform-origin: center;
+  transition: transform 0.12s ease;
 }
-.incident-marker--pending .incident-marker__pulse {
-  background: #e63946;
+.incident-marker:active .incident-marker__icon {
+  transform: scale(0.92);
 }
 
-/* Mine — green (I own this, currently responding) */
-.incident-marker--mine .incident-marker__icon {
-  background: linear-gradient(160deg, #3cb886, #2f9e73 55%, #267a58);
-}
-.incident-marker--mine .incident-marker__pulse {
-  background: #2f9e73;
-  animation-duration: 1.4s; /* faster pulse = higher priority */
+/* Tail — tip points at the coordinate */
+.incident-marker__tail {
+  position: absolute;
+  top: 34px;
+  left: 50%;
+  margin-left: -8px;
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 18px solid var(--pin);
+  z-index: 0;
+  pointer-events: none;
+  filter: drop-shadow(0 3px 2px rgba(0, 0, 0, 0.3));
 }
 
-/* Other responders — amber (already claimed by someone else) */
-.incident-marker--other .incident-marker__icon {
-  background: linear-gradient(160deg, #f5b547, #f59e0b 55%, #c47c08);
-}
+/* Other responders' incidents — no pulse */
 .incident-marker--other .incident-marker__pulse {
-  display: none; /* no pulse — not urgent for me */
+  display: none;
+}
+
+/* Mine — faster pulse (higher priority) */
+.incident-marker--mine .incident-marker__pulse {
+  animation-duration: 1.4s;
+}
+
+/* Focus ring */
+.incident-marker:focus-visible .incident-marker__icon {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.6),
+              0 4px 10px rgba(0, 0, 0, 0.4);
 }
 
 /* MapLibre controls */

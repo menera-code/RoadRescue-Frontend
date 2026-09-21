@@ -5,12 +5,14 @@ import {
   doc, updateDoc, serverTimestamp,
 } from 'firebase/firestore'
 import * as maplibregl from 'maplibre-gl'
-import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { db } from '@/firebase'
 import { searchBarangays } from '@/data/barangays'
 
-maplibregl.setWorkerUrl(maplibreWorkerUrl)
+// NOTE: maplibre-gl v3+ bundles its own worker — no setWorkerUrl needed.
+// The old worker import was removed because the path no longer exists in
+// v3+, and the bad asset request was falling through to the SPA fallback
+// (returning index.html with MIME text/html), which killed the bundle.
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
 
@@ -131,7 +133,10 @@ function renderMarkers() {
 
     let m = markers.get(inc.id)
     if (m) {
-      m.setLngLat([lng, lat])
+      const cur = m.getLngLat()
+      if (cur.lng !== lng || cur.lat !== lat) {
+        m.setLngLat([lng, lat])
+      }
       const el = m.getElement()
       el.classList.toggle('em-marker--selected', isSelected)
     } else {
@@ -1089,23 +1094,57 @@ function statusLabel(s) {
 </style>
 
 <style>
+/* ============================================================
+   EMERGENCY MARKER — teardrop pin, tip at the coordinate
+   Outer element stays transform-free so MapLibre's positioning
+   transform is never fought by a CSS transition.
+   ============================================================ */
 .em-marker {
   position: relative;
-  width: 44px; height: 44px;
+  width: 40px;
+  height: 52px;
   padding: 0;
+  margin: 0;
   border: none;
   background: transparent;
   cursor: pointer;
-  display: grid;
-  place-items: center;
-  transition: transform 0.12s ease;
+  display: block;
   -webkit-tap-highlight-color: transparent;
+  outline: none;
+  transition: none;
 }
-.em-marker:active { transform: scale(0.9); }
 
+/* Soft pulse ring anchored to the circular head */
+.em-marker__pulse {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  margin-left: -20px;
+  border-radius: 50%;
+  background: #e63946;
+  opacity: 0.55;
+  z-index: 1;
+  pointer-events: none;
+  transform-origin: center;
+  animation: em-pulse 1.8s ease-out infinite;
+}
+
+@keyframes em-pulse {
+  0%   { transform: scale(1);   opacity: 0.55; }
+  70%  { transform: scale(1.9); opacity: 0;    }
+  100% { transform: scale(1.9); opacity: 0;    }
+}
+
+/* Circular head */
 .em-marker__icon {
-  position: relative;
-  width: 38px; height: 38px;
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  margin-left: -20px;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -1115,29 +1154,24 @@ function statusLabel(s) {
   border: 3px solid #fff;
   box-shadow: 0 3px 12px rgba(230, 57, 70, 0.6);
   z-index: 2;
+  transform-origin: center;
   transition: transform 0.15s ease;
 }
+.em-marker:active .em-marker__icon {
+  transform: scale(0.92);
+}
 
-.em-marker__pulse {
-  position: absolute;
-  width: 38px; height: 38px;
-  border-radius: 50%;
-  background: #e63946;
-  opacity: 0.55;
-  z-index: 1;
-  animation: em-pulse 1.8s ease-out infinite;
-}
-@keyframes em-pulse {
-  0%   { transform: scale(1);   opacity: 0.55; }
-  70%  { transform: scale(1.9); opacity: 0; }
-  100% { transform: scale(1.9); opacity: 0; }
-}
+/* (EmergenciesTab did not originally have a tail; keeping head-only pin.
+   If you want a tail here too, add a .em-marker__tail span in the
+   createMarker innerHTML and the CSS below.) */
+
 .em-marker--selected .em-marker__icon {
   transform: scale(1.15);
   border-width: 4px;
   box-shadow: 0 4px 20px rgba(230, 57, 70, 0.9);
 }
 
+/* MapLibre controls */
 .maplibregl-ctrl-group {
   background: rgba(18, 28, 46, 0.92) !important;
   backdrop-filter: blur(10px);
