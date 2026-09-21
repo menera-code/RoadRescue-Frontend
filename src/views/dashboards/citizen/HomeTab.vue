@@ -1,10 +1,12 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import AppLogo from '@/components/AppLogo.vue'
 
 const emit = defineEmits(['open-profile'])
 
+const router = useRouter()
 const auth = useAuthStore()
 
 const firstName = computed(() => {
@@ -23,7 +25,6 @@ const initials = computed(() => {
 })
 
 const HOTLINES = [
-  { label: 'Emergency (life-threatening)', number: '911', icon: '🚨' },
   { label: 'PNP Calapan', number: '(043) 288-7777', icon: '👮' },
   { label: 'BFP Calapan', number: '(043) 288-4444', icon: '🚒' },
 ]
@@ -31,6 +32,10 @@ const HOTLINES = [
 function call(number) {
   const cleaned = number.replace(/[^\d+]/g, '')
   window.location.href = `tel:${cleaned}`
+}
+
+function quickEmergency() {
+  router.push({ name: 'sos' })
 }
 </script>
 
@@ -68,29 +73,39 @@ function call(number) {
       <div class="emergency-head">
         <span class="emergency-icon" aria-hidden="true">🚨</span>
         <div>
-          <h3 class="emergency-title">Someone injured?</h3>
+          <h3 class="emergency-title">Emergency?</h3>
           <p class="emergency-sub">
-            For life-threatening injuries, call 911 first.
+            No login needed — tap once and help is notified instantly.
           </p>
         </div>
       </div>
 
       <button
         class="emergency-cta"
-        @click="call('911')"
-        aria-label="Call 911 emergency hotline"
+        @click="quickEmergency"
+        aria-label="Send a quick emergency alert"
       >
-        <span class="emergency-number">911</span>
+        <span class="emergency-label">Quick Emergency</span>
         <span class="emergency-call-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" width="20" height="20">
-            <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.7A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .3 2 .7 2.9a2 2 0 0 1-.4 2.1L8.1 9.9a16 16 0 0 0 6 6l1.2-1.3a2 2 0 0 1 2.1-.4c.9.4 1.9.6 2.9.7a2 2 0 0 1 1.7 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            <path
+              d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
           </svg>
         </span>
       </button>
 
+      <p class="emergency-note tiny">
+        Sends your GPS + 10-sec voice message to the dispatch center.
+        For life-threatening injuries, also call <strong>911</strong>.
+      </p>
+
       <div class="hotlines">
         <button
-          v-for="h in HOTLINES.slice(1)"
+          v-for="h in HOTLINES"
           :key="h.number"
           class="hotline"
           @click="call(h.number)"
@@ -173,19 +188,34 @@ function call(number) {
 
 .emergency-cta {
   display: flex; align-items: center; justify-content: center; gap: 12px;
-  width: 100%; min-height: 56px; padding: 10px 20px;
+  width: 100%; min-height: 58px; padding: 10px 20px;
   border: none; border-radius: var(--radius);
   background: linear-gradient(160deg, #f14b57 0%, var(--primary) 55%, var(--primary-dark) 100%);
   color: #fff; cursor: pointer;
   box-shadow: 0 6px 16px rgba(230, 57, 70, 0.35);
-  transition: transform 0.12s ease; margin-bottom: 12px;
+  transition: transform 0.12s ease; margin-bottom: 10px;
+  animation: emergency-pulse 2.2s ease-in-out infinite;
 }
 .emergency-cta:active { transform: scale(0.98); }
-.emergency-number { font-size: 1.5rem; font-weight: 800; letter-spacing: 0.02em; }
+@keyframes emergency-pulse {
+  0%, 100% { box-shadow: 0 6px 16px rgba(230, 57, 70, 0.35); }
+  50%      { box-shadow: 0 6px 24px rgba(230, 57, 70, 0.6); }
+}
+.emergency-label {
+  font-size: 1.125rem; font-weight: 800; letter-spacing: 0.01em;
+}
 .emergency-call-icon {
-  display: grid; place-items: center; width: 30px; height: 30px;
+  display: grid; place-items: center; width: 32px; height: 32px;
   border-radius: 50%; background: rgba(255, 255, 255, 0.18);
 }
+
+.emergency-note {
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+  text-align: center;
+}
+.emergency-note strong { color: var(--text); font-weight: 700; }
 
 .hotlines { display: grid; gap: 8px; }
 .hotline {
