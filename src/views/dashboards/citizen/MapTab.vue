@@ -6,12 +6,6 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { useIncidents } from '@/composables/useIncidents'
 import MediaGallery from '@/components/MediaGallery.vue'
 
-// NOTE: maplibre-gl v3+ bundles its own worker — no setWorkerUrl needed.
-// The old `import maplibreWorkerUrl from '...worker.mjs?worker&url'` line
-// was removed because the path no longer exists in v3+, and the bad asset
-// request was falling through to the SPA fallback (returning index.html
-// with MIME text/html), which killed the whole bundle.
-
 // =========================================================================
 // CONSTANTS
 // =========================================================================
@@ -93,7 +87,6 @@ const currentStyleKey = ref(
   localStorage.getItem(STORAGE_KEY) || DEFAULT_STYLE_KEY
 )
 
-// Prevents the map from re-fitting to reports on every data change
 let hasAutoFit = false
 
 let userMarker = null
@@ -191,7 +184,6 @@ function requestUserLocation() {
       userPosition.value = { lng: longitude, lat: latitude, accuracy }
       dropUserMarker(longitude, latitude)
 
-      // Only fly to the user if we have nothing else to frame.
       if (!myReports.value.length) {
         map.value?.flyTo({
           center: [longitude, latitude],
@@ -217,7 +209,9 @@ function requestUserLocation() {
           locationError.value = 'Could not get your location.'
       }
     },
-    { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+    // maximumAge: 0 → always fetch a fresh GPS reading. Otherwise the
+    // browser can hand back a position up to 30s old and the dot lags.
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
   )
 }
 
@@ -225,12 +219,16 @@ function dropUserMarker(lng, lat) {
   if (!map.value) return
   if (userMarker) userMarker.remove()
 
+  // ---------------------------------------------------------------------
+  // Two-element structure:
+  //   outer .user-dot-anchor → MapLibre positions this via translate().
+  //     We must NOT set position/top/left/transform on it.
+  //   inner .user-dot        → visual dot, absolutely centered on the
+  //     anchor origin via margin offsets. No transform, ever.
+  // ---------------------------------------------------------------------
   const el = document.createElement('div')
-  el.className = 'user-dot'
-  // Single child — the pulse is painted via box-shadow on the core,
-  // not animated with transform, so it can't desync from MapLibre's
-  // positioning transform during zoom.
-  el.innerHTML = `<span class="user-dot__core"></span>`
+  el.className = 'user-dot-anchor'
+  el.innerHTML = `<span class="user-dot"></span>`
 
   userMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
     .setLngLat([lng, lat])
@@ -245,7 +243,6 @@ function renderReportMarkers() {
 
   const currentIds = new Set(myReports.value.map((i) => i.id))
 
-  // Drop markers for reports no longer in the list
   for (const [id, marker] of reportMarkers.entries()) {
     if (!currentIds.has(id)) {
       marker.remove()
@@ -253,7 +250,6 @@ function renderReportMarkers() {
     }
   }
 
-  // Add or update markers
   for (const inc of myReports.value) {
     const loc = inc.location
     if (!loc) continue
@@ -261,7 +257,6 @@ function renderReportMarkers() {
     const lat = Number(loc.latitude ?? loc.lat)
     const lng = Number(loc.longitude ?? loc.lng)
 
-    // Skip broken coordinates (missing, NaN, or Firestore origin)
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
     if (lat === 0 && lng === 0) continue
 
@@ -287,7 +282,7 @@ function renderReportMarkers() {
 
       marker = new maplibregl.Marker({
         element: el,
-        anchor: 'bottom',   // tip of the pin points at the coordinate
+        anchor: 'bottom',
       })
         .setLngLat([lng, lat])
         .addTo(map.value)
@@ -1253,27 +1248,37 @@ const reportCount = computed(() => myReports.value.length)
 <style>
 /* ============================================================
    USER LOCATION DOT
-   Outer element must have NO transform / transition / filter —
-   MapLibre owns its positioning transform. The pulse is a
-   box-shadow animation (paint layer) rather than a transform
-   animation (compositor layer), so it stays perfectly synced
-   with MapLibre's translate during zoom.
+
+   Two-element structure:
+     .user-dot-anchor  → given to MapLibre. It writes position:absolute
+                         + transform: translate(x, y) on this node.
+                         We must NEVER set position/top/left/transform
+                         here, or we override MapLibre and the dot drifts
+                         with the map during zoom.
+     .user-dot         → inner visual dot, centered on the anchor's
+                         (0,0) via negative margins (no transform).
+                         Pulse is a box-shadow animation only.
    ============================================================ */
-.user-dot {
-  position: relative;
-  width: 14px;
-  height: 14px;
+.user-dot-anchor {
+  /* Intentionally empty for positioning.
+     MapLibre adds .maplibregl-marker which supplies position:absolute.
+     Any positioning CSS here will break zoom sync. */
   pointer-events: none;
 }
 
-.user-dot__core {
+.user-dot {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;   /* center the 14px dot on the anchor origin */
   border-radius: 50%;
   background: #2f9e73;
   border: 2.5px solid #fff;
+  pointer-events: none;
   animation: user-pulse 2s ease-out infinite;
-  /* box-shadow only — no transform, no will-change, no filter */
+  /* No transform here — ever. */
 }
 
 @keyframes user-pulse {
@@ -1295,9 +1300,9 @@ const reportCount = computed(() => myReports.value.length)
 }
 
 /* ============================================================
-   REPORT MARKER — teardrop pin, tip at the coordinate
-   The outer <button> must stay transform-free so MapLibre's
-   positioning transform is never interpolated by a CSS transition.
+   REPORT MARKER — teardrop pin, tip at the coordinate.
+   Outer <button> is transform-free so MapLibre's positioning
+   transform is never fought by a CSS transition.
    ============================================================ */
 .inc-marker {
   position: relative;
@@ -1309,12 +1314,10 @@ const reportCount = computed(() => myReports.value.length)
   background: transparent;
   cursor: pointer;
   display: block;
-  /* No transform, no transition, no filter here. */
   -webkit-tap-highlight-color: transparent;
   outline: none;
 }
 
-/* Colour palette per status — set once, used by icon + tail */
 .inc-marker--unverified { --pin: #f59e0b; }
 .inc-marker--pending    { --pin: #e63946; }
 .inc-marker--active     { --pin: #3b82f6; }
@@ -1322,7 +1325,6 @@ const reportCount = computed(() => myReports.value.length)
 .inc-marker--cancelled  { --pin: #64748b; }
 .inc-marker--muted      { --pin: #64748b; }
 
-/* Soft pulse ring — anchored to the circular head, not the tail */
 .inc-marker__pulse {
   position: absolute;
   top: 0;
@@ -1345,7 +1347,6 @@ const reportCount = computed(() => myReports.value.length)
   100% { transform: scale(1.8); opacity: 0;    }
 }
 
-/* Circular head — holds the type icon */
 .inc-marker__icon {
   position: absolute;
   top: 0;
@@ -1365,13 +1366,11 @@ const reportCount = computed(() => myReports.value.length)
   z-index: 2;
   transform-origin: center;
   transition: transform 0.12s ease;
-  /* Press feedback lives HERE, never on the outer button */
 }
 .inc-marker:active .inc-marker__icon {
   transform: scale(0.92);
 }
 
-/* Downward-pointing triangle — its tip is the coordinate */
 .inc-marker__tail {
   position: absolute;
   top: 34px;
@@ -1387,7 +1386,6 @@ const reportCount = computed(() => myReports.value.length)
   filter: drop-shadow(0 3px 2px rgba(0, 0, 0, 0.3));
 }
 
-/* Non-pulsing states */
 .inc-marker--resolved .inc-marker__pulse,
 .inc-marker--cancelled .inc-marker__pulse,
 .inc-marker--muted .inc-marker__pulse {
@@ -1395,7 +1393,6 @@ const reportCount = computed(() => myReports.value.length)
   display: none;
 }
 
-/* Focus ring for a11y */
 .inc-marker:focus-visible .inc-marker__icon {
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.6),
               0 4px 10px rgba(0, 0, 0, 0.4);
