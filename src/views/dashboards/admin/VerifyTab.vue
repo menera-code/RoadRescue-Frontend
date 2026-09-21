@@ -41,13 +41,13 @@ const filtered = computed(() => {
 const TYPE_ICONS = {
   flat_tire: '🛞', battery: '🔋', fuel: '⛽',
   stalled_vehicle: '🛑', minor_collision: '🚗', major_collision: '💥',
-  vehicle_fire: '🔥', road_hazard: '⚠️',
+  vehicle_fire: '🔥', road_hazard: '⚠️', emergency: '🚨',
 }
 const TYPE_LABELS = {
   flat_tire: 'Flat Tire', battery: 'Dead Battery', fuel: 'Out of Fuel',
   stalled_vehicle: 'Stalled Vehicle', minor_collision: 'Minor Crash',
   major_collision: 'Major Crash', vehicle_fire: 'Vehicle Fire',
-  road_hazard: 'Road Hazard',
+  road_hazard: 'Road Hazard', emergency: 'Emergency (SOS)',
 }
 
 function typeIcon(t) { return TYPE_ICONS[t] || '❓' }
@@ -67,6 +67,10 @@ function timeAgo(date) {
 function severityTone(sev) {
   return { low: 'low', medium: 'medium', high: 'high', critical: 'critical' }[sev] || 'medium'
 }
+
+const isEmergency = computed(() =>
+  selectedIncident.value?.type === 'emergency'
+)
 
 const detailBarangay = ref('')
 const detailBarangayQuery = ref('')
@@ -186,9 +190,7 @@ async function onReject() {
 
 <template>
   <section class="verify-tab">
-    <!-- ============================================================
-         LIST VIEW
-         ============================================================ -->
+    <!-- LIST VIEW -->
     <template v-if="viewMode === 'list'">
       <header class="head">
         <div>
@@ -251,6 +253,7 @@ async function onReject() {
           v-for="inc in filtered"
           :key="inc.id"
           class="card"
+          :class="{ 'card--emergency': inc.type === 'emergency' }"
           role="button"
           tabindex="0"
           @click="openDetail(inc)"
@@ -263,8 +266,9 @@ async function onReject() {
               </span>
               <div class="card-type-text">
                 <span class="card-type-label">{{ typeLabel(inc.type) }}</span>
+                <span v-if="inc.type === 'emergency'" class="card-type-sos">SOS</span>
                 <span
-                  v-if="inc.ml?.predictedType"
+                  v-if="inc.ml?.predictedType && inc.type !== 'emergency'"
                   class="card-type-pred"
                   :class="{
                     'card-type-pred--match': inc.ml.reportedTypeMatches,
@@ -283,6 +287,11 @@ async function onReject() {
 
           <p v-if="inc.description" class="card-desc">{{ inc.description }}</p>
 
+          <div v-if="inc.type === 'emergency' && inc.audioUrl" class="card-audio-pill">
+            <span aria-hidden="true">🎤</span>
+            <span>Voice message</span>
+          </div>
+
           <div class="card-meta">
             <span v-if="inc.barangay" class="card-meta-item">
               <span aria-hidden="true">📍</span> {{ inc.barangay }}
@@ -300,9 +309,7 @@ async function onReject() {
       </ul>
     </template>
 
-    <!-- ============================================================
-         DETAIL VIEW — mobile stack, desktop split
-         ============================================================ -->
+    <!-- DETAIL VIEW -->
     <template v-else>
       <header class="head head--detail">
         <button class="back-btn" aria-label="Back to list" @click="closeDetail">
@@ -311,27 +318,49 @@ async function onReject() {
               stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
-        <h1 class="h2">Review Incident</h1>
+        <h1 class="h2">
+          {{ isEmergency ? 'Review Emergency' : 'Review Incident' }}
+        </h1>
       </header>
 
       <div v-if="selectedIncident" class="detail-layout">
-        <!-- LEFT COLUMN (media) -->
+        <!-- LEFT: media -->
         <div class="detail-col detail-col--media">
+          <!-- Emergency audio (if any) -->
+          <div v-if="isEmergency && selectedIncident.audioUrl" class="emergency-audio-card">
+            <div class="emergency-audio-head">
+              <span class="emergency-audio-icon" aria-hidden="true">🚨</span>
+              <div>
+                <p class="emergency-audio-label">Voice message from caller</p>
+                <p class="tiny emergency-audio-meta">
+                  {{ selectedIncident.audioDurationSeconds
+                      ? `${selectedIncident.audioDurationSeconds} seconds`
+                      : 'Recorded' }}
+                </p>
+              </div>
+            </div>
+            <audio
+              :src="selectedIncident.audioUrl"
+              controls
+              class="emergency-audio-player"
+              preload="metadata"
+            />
+          </div>
+
           <MediaGallery
             v-if="selectedIncident.photoUrls?.length || selectedIncident.videoUrl"
             :photo-urls="selectedIncident.photoUrls || []"
             :video-url="selectedIncident.videoUrl || null"
             mode="full"
           />
-          <div v-else class="no-media">
+          <div v-else-if="!isEmergency || !selectedIncident.audioUrl" class="no-media">
             <div class="no-media-icon" aria-hidden="true">📷</div>
             <p class="tiny">No media attached to this report.</p>
           </div>
         </div>
 
-        <!-- RIGHT COLUMN (info + actions) -->
+        <!-- RIGHT: info + actions -->
         <div class="detail-col detail-col--info">
-          <!-- Citizen report -->
           <div class="detail-card">
             <div class="detail-row">
               <span class="detail-label">Type</span>
@@ -360,8 +389,7 @@ async function onReject() {
             </div>
           </div>
 
-          <!-- ML analysis -->
-          <div v-if="selectedIncident.ml" class="detail-card detail-card--ml">
+          <div v-if="selectedIncident.ml && !isEmergency" class="detail-card detail-card--ml">
             <div class="ml-head">
               <span class="ml-badge">🤖 AI Analysis</span>
               <span v-if="selectedIncident.ml.reportedTypeMatches === true" class="ml-match">✓ Matches</span>
@@ -387,15 +415,8 @@ async function onReject() {
                 </span>
               </span>
             </div>
-            <div v-if="selectedIncident.ml.keywords?.length" class="detail-row">
-              <span class="detail-label">Keywords</span>
-              <span class="detail-value keyword-row">
-                <span v-for="kw in selectedIncident.ml.keywords" :key="kw" class="keyword-chip">{{ kw }}</span>
-              </span>
-            </div>
           </div>
 
-          <!-- Barangay -->
           <div class="detail-card">
             <p class="detail-section-title">Dispatch to barangay</p>
 
@@ -432,7 +453,6 @@ async function onReject() {
               </ul>
             </div>
 
-            <!-- Assigned responder -->
             <div class="responder-preview">
               <p class="detail-section-title">Assigned responder</p>
 
@@ -487,7 +507,6 @@ async function onReject() {
   min-height: 100%;
 }
 
-/* ---------- Header ---------- */
 .head { margin-bottom: 16px; }
 .head .h1 { font-size: 1.5rem; }
 .head .muted { margin-top: 4px; line-height: 1.5; }
@@ -514,7 +533,6 @@ async function onReject() {
 }
 .back-btn:active { transform: scale(0.92); }
 
-/* ---------- Count banner ---------- */
 .count-banner {
   display: flex;
   align-items: center;
@@ -538,7 +556,6 @@ async function onReject() {
 .count-title { font-size: 0.9375rem; font-weight: 700; margin-bottom: 2px; }
 .count-text { font-size: 0.75rem; color: var(--text-muted); line-height: 1.4; }
 
-/* ---------- Search ---------- */
 .search-wrap { position: relative; margin-bottom: 14px; }
 .search-icon {
   position: absolute;
@@ -562,7 +579,6 @@ async function onReject() {
 }
 .search-input:focus { border-color: #3b82f6; }
 
-/* ---------- States ---------- */
 .state-block {
   background: var(--bg-elev);
   border: 1px dashed var(--border);
@@ -585,7 +601,6 @@ async function onReject() {
 .state-title { font-size: 0.9375rem; font-weight: 650; margin-bottom: 4px; }
 .state-text { line-height: 1.5; max-width: 32ch; margin-inline: auto; }
 
-/* ---------- List ---------- */
 .list {
   list-style: none;
   display: grid;
@@ -606,6 +621,17 @@ async function onReject() {
   transform: scale(0.98);
   border-color: rgba(59, 130, 246, 0.4);
 }
+.card--emergency {
+  border-color: rgba(230, 57, 70, 0.5);
+  background:
+    radial-gradient(90% 100% at 0% 0%, rgba(230, 57, 70, 0.10) 0%, transparent 70%),
+    var(--bg-elev);
+  animation: card-alert 2s ease-in-out infinite alternate;
+}
+@keyframes card-alert {
+  from { box-shadow: 0 0 0 0 rgba(230, 57, 70, 0.3); }
+  to   { box-shadow: 0 0 20px 2px rgba(230, 57, 70, 0.4); }
+}
 @keyframes card-in {
   from { transform: translateY(6px); opacity: 0; }
   to   { transform: translateY(0); opacity: 1; }
@@ -619,19 +645,24 @@ async function onReject() {
   margin-bottom: 10px;
 }
 .card-type { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
-.card-type-icon {
-  font-size: 1.25rem;
-  line-height: 1;
-  flex-shrink: 0;
-  margin-top: 2px;
+.card-type-icon { font-size: 1.25rem; line-height: 1; flex-shrink: 0; margin-top: 2px; }
+.card-type-text { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.card-type-label { font-size: 1rem; font-weight: 700; }
+.card-type-sos {
+  font-size: 0.5625rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: #e63946;
+  color: #fff;
+  animation: sos-blink 1.2s ease-in-out infinite alternate;
 }
-.card-type-text { min-width: 0; }
-.card-type-label { font-size: 1rem; font-weight: 700; display: block; }
+@keyframes sos-blink { from { opacity: 1; } to { opacity: 0.6; } }
 .card-type-pred {
   display: block;
   font-size: 0.6875rem;
   color: #3b82f6;
-  margin-top: 3px;
   font-weight: 600;
 }
 .card-type-pred--match { color: var(--accent); }
@@ -650,12 +681,21 @@ async function onReject() {
   overflow: hidden;
 }
 
-.card-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+.card-audio-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 99px;
+  background: rgba(230, 57, 70, 0.12);
+  border: 1px solid rgba(230, 57, 70, 0.3);
+  color: #e63946;
+  font-size: 0.75rem;
+  font-weight: 650;
   margin-bottom: 10px;
 }
+
+.card-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
 .card-meta-item {
   display: inline-flex;
   align-items: center;
@@ -674,19 +714,34 @@ async function onReject() {
   color: #3b82f6;
   font-weight: 600;
 }
-.card-arrow {
-  transition: transform 0.15s ease;
-}
+.card-arrow { transition: transform 0.15s ease; }
 .card:active .card-arrow { transform: translateX(3px); }
 
-/* ---------- Detail layout ---------- */
 .detail-layout {
   display: grid;
   grid-template-columns: 1fr;
   gap: 14px;
 }
-
 .detail-col { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+
+.emergency-audio-card {
+  background:
+    radial-gradient(90% 100% at 0% 0%, rgba(230, 57, 70, 0.10) 0%, transparent 70%),
+    var(--bg-elev);
+  border: 1px solid rgba(230, 57, 70, 0.4);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.emergency-audio-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.emergency-audio-icon { font-size: 1.5rem; }
+.emergency-audio-label { font-size: 0.9375rem; font-weight: 700; }
+.emergency-audio-meta { color: var(--text-muted); }
+.emergency-audio-player { width: 100%; height: 44px; }
 
 .no-media {
   background: var(--bg-elev);
@@ -764,20 +819,6 @@ async function onReject() {
 .severity-chip--high { color: #ef4444; background: rgba(239, 68, 68, 0.14); }
 .severity-chip--critical { color: #fff; background: #dc2626; }
 
-.keyword-row {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 4px;
-}
-.keyword-chip {
-  font-size: 0.6875rem;
-  background: var(--bg-input);
-  color: var(--text-muted);
-  padding: 3px 8px;
-  border-radius: 6px;
-}
-
 .detail-section-title {
   font-size: 0.6875rem;
   font-weight: 700;
@@ -787,7 +828,6 @@ async function onReject() {
   margin-bottom: 10px;
 }
 
-/* Barangay chip */
 .barangay-chip-row { margin-bottom: 16px; }
 .barangay-chip-lg {
   display: inline-flex;
@@ -836,7 +876,6 @@ async function onReject() {
 .barangay-item { padding: 10px 12px; border-radius: 8px; font-size: 0.9375rem; cursor: pointer; }
 .barangay-item:hover, .barangay-item:active { background: var(--bg-input); }
 
-/* Responder preview */
 .responder-preview { padding-top: 14px; border-top: 1px solid var(--border); }
 .responder-loading { display: flex; align-items: center; gap: 8px; }
 .responder-assigned, .responder-missing {
@@ -864,7 +903,6 @@ async function onReject() {
   line-height: 1;
 }
 
-/* Actions */
 .error-banner {
   background: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.3);
@@ -883,18 +921,12 @@ async function onReject() {
 .detail-dispatch { flex: 1; }
 .detail-dispatch:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* ============================================================
-   RESPONSIVE — tablet 2-col list, desktop 2-col detail
-   ============================================================ */
-
-/* Tablet: list goes 2-col */
 @media (min-width: 640px) {
   .head .h1 { font-size: 1.75rem; }
   .list { grid-template-columns: repeat(2, 1fr); gap: 14px; }
   .count-number { font-size: 2.5rem; }
 }
 
-/* Desktop: detail becomes 2-column split */
 @media (min-width: 1024px) {
   .head .h1 { font-size: 2rem; }
   .head .muted { font-size: 1rem; }
@@ -907,11 +939,7 @@ async function onReject() {
     gap: 24px;
     align-items: start;
   }
-
-  .detail-col--media {
-    position: sticky;
-    top: 24px;
-  }
+  .detail-col--media { position: sticky; top: 24px; }
 
   .detail-actions {
     position: sticky;
@@ -922,7 +950,6 @@ async function onReject() {
   }
 }
 
-/* Wide desktop — 4 columns for list, wider detail split */
 @media (min-width: 1440px) {
   .list { grid-template-columns: repeat(4, 1fr); }
   .detail-layout { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 32px; }
