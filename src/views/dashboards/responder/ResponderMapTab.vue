@@ -16,9 +16,6 @@ import {
 // =========================================================================
 const CALAPAN_CENTER = [121.1803, 13.4108]
 const DEFAULT_ZOOM = 13
-
-// OSRM public demo server — free, worldwide, no key needed.
-// Docs: http://project-osrm.org/docs/v5.24.0/api/
 const OSRM_BASE = 'https://router.project-osrm.org/route/v1/driving'
 
 const SATELLITE_STYLE = {
@@ -85,6 +82,17 @@ const { incidents: otherActiveIncidents } = useIncidents({
   scope: 'all',
 })
 
+// -------------------------------------------------------------------------
+// Optimistic-accept override.
+//
+// When the responder taps Accept, we don't want to wait for Firestore's
+// realtime listener to echo the change back — otherwise the sheet keeps
+// showing "Accept Request" and the dashed orange preview route for up to
+// several hundred ms. We track IDs we've accepted locally and treat them
+// as "mine" until Firestore confirms.
+// -------------------------------------------------------------------------
+const optimisticAcceptedIds = ref(new Set())
+
 const mapIncidents = computed(() => {
   const seen = new Set()
   const out = []
@@ -94,17 +102,35 @@ const mapIncidents = computed(() => {
     seen.add(i.id)
     out.push({ ...i, _group: 'mine' })
   }
+
   for (const i of pendingIncidents.value) {
     if (seen.has(i.id)) continue
     seen.add(i.id)
-    out.push({ ...i, _group: 'pending' })
+    const group = optimisticAcceptedIds.value.has(i.id) ? 'mine' : 'pending'
+    out.push({ ...i, _group: group })
   }
+
   for (const i of otherActiveIncidents.value) {
     if (seen.has(i.id)) continue
     seen.add(i.id)
     out.push({ ...i, _group: 'other' })
   }
+
   return out
+})
+
+// Clear optimistic flags as soon as Firestore catches up.
+watch(myIncidents, (list) => {
+  if (!optimisticAcceptedIds.value.size) return
+  const next = new Set(optimisticAcceptedIds.value)
+  let changed = false
+  for (const inc of list) {
+    if (next.has(inc.id)) {
+      next.delete(inc.id)
+      changed = true
+    }
+  }
+  if (changed) optimisticAcceptedIds.value = next
 })
 
 // =========================================================================
@@ -122,13 +148,23 @@ const locationError = ref('')
 const showAttrib = ref(false)
 const showStylePicker = ref(false)
 
-const selectedIncident = ref(null)
+// -------------------------------------------------------------------------
+// Selection is by ID. The incident object itself is derived from
+// mapIncidents so it stays in sync with Firestore updates (status changes,
+// admin cancellation, etc.).
+// -------------------------------------------------------------------------
+const selectedIncidentId = ref(null)
+
+const selectedIncident = computed(
+  () => mapIncidents.value.find((i) => i.id === selectedIncidentId.value) || null
+)
+
 const acceptingId = ref(null)
 const acceptError = ref('')
 
 // Routing state
 const routeGeojson = ref(null)
-const routeMeta = ref(null)      // { distance (m), duration (s) }
+const routeMeta = ref(null)
 const routeLoading = ref(false)
 const routeError = ref('')
 let routeAbortController = null
@@ -147,12 +183,14 @@ function currentStyleOption() {
   )
 }
 
-// Which style the route should render as.
-//   'active'  → solid blue (I've accepted it)
-//   'preview' → dashed orange (I'm looking at a pending incident)
+// Derived: which route style to render.
+//   'active'  → solid ocean-blue (I've accepted it)
+//   'preview' → dashed sunset-orange (pending / not mine)
 const routeMode = computed(() => {
-  if (!selectedIncident.value) return null
-  return selectedIncident.value._group === 'mine' ? 'active' : 'preview'
+  const inc = selectedIncident.value
+  if (!inc) return null
+  if (inc._group === 'other') return null   // no route for others' incidents
+  return inc._group === 'mine' ? 'active' : 'preview'
 })
 
 // =========================================================================
@@ -167,6 +205,7 @@ onMounted(async () => {
       requestUserLocation()
       renderIncidentMarkers()
       addRouteLayers()
+      updateRouteLayerVisibility()
     })
   } else {
     requestUserLocation()
@@ -252,15 +291,11 @@ function dropUserMarker(lng, lat) {
   if (!map.value) return
   if (userMarker) userMarker.remove()
 
-  // ---------------------------------------------------------------------
-  // Single element, everything explicit.
-  // MapLibre only adds .maplibregl-marker to elements IT creates. Since
-  // we supply our own, we must declare position: absolute; top: 0;
-  // left: 0 ourselves, or the element falls into document flow and drifts
-  // on zoom. The pulse is a box-shadow animation (paint layer), never a
-  // transform (compositor layer) — so it can't desync from MapLibre's
-  // translate during pan/zoom.
-  // ---------------------------------------------------------------------
+  // Single element, everything explicit. MapLibre only adds the
+  // .maplibregl-marker class to elements IT creates, so we must set
+  // position/top/left ourselves. The pulse is a box-shadow animation
+  // (paint layer), never a transform — so it can't desync from
+  // MapLibre's translate during pan/zoom.
   const el = document.createElement('div')
   el.className = 'user-marker-dot'
 
@@ -304,9 +339,13 @@ function renderIncidentMarkers() {
       if (el.className !== wanted) el.className = wanted
     } else {
       const el = createIncidentMarkerElement(inc._group, inc.type)
-      el.addEventListener('click', () => {
-        openDetail(inc)
-      })
+
+      // Capture the ID *string* — not the incident object. This avoids
+      // the stale-closure bug: if Firestore pushes a fresh object later,
+      // the marker's click handler still refers to the same ID and picks
+      // up the current data from mapIncidents.
+      const id = inc.id
+      el.addEventListener('click', () => openDetail(id))
 
       marker = new maplibregl.Marker({
         element: el,
@@ -353,70 +392,83 @@ watch(mapIncidents, () => {
   if (map.value?.loaded()) renderIncidentMarkers()
 })
 
+// If the selected incident disappears (resolved by admin, removed),
+// close the sheet and clear the route.
+watch(selectedIncident, (inc) => {
+  if (!inc && selectedIncidentId.value) {
+    selectedIncidentId.value = null
+    clearRoute()
+  }
+})
+
 // =========================================================================
-// ROUTE LAYERS (added after map loads)
+// ROUTE LAYERS
 // =========================================================================
 function addRouteLayers() {
-  if (!map.value || map.value.getSource('route')) return
+  if (!map.value) return
 
-  map.value.addSource('route', {
-    type: 'geojson',
-    data: { type: 'FeatureCollection', features: [] },
-  })
+  // Idempotent — safe to call after style changes.
+  if (!map.value.getSource('route')) {
+    map.value.addSource('route', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    })
+  }
 
-  // ----- Accepted route: solid ocean-blue -----
+  if (!map.value.getLayer('route-halo-solid')) {
+    map.value.addLayer({
+      id: 'route-halo-solid',
+      type: 'line',
+      source: 'route',
+      layout: {
+        'line-cap': 'round',
+        'line-join': 'round',
+        visibility: 'none',
+      },
+      paint: {
+        'line-color': 'rgba(10, 22, 40, 0.55)',
+        'line-width': 12,
+        'line-opacity': 0.9,
+      },
+    })
+  }
 
-  // Halo (wider, darker, drawn first so it sits underneath)
-  map.value.addLayer({
-    id: 'route-halo-solid',
-    type: 'line',
-    source: 'route',
-    layout: {
-      'line-cap': 'round',
-      'line-join': 'round',
-      visibility: 'none',
-    },
-    paint: {
-      'line-color': 'rgba(10, 22, 40, 0.55)',
-      'line-width': 12,
-      'line-opacity': 0.9,
-    },
-  })
+  if (!map.value.getLayer('route-line-solid')) {
+    map.value.addLayer({
+      id: 'route-line-solid',
+      type: 'line',
+      source: 'route',
+      layout: {
+        'line-cap': 'round',
+        'line-join': 'round',
+        visibility: 'none',
+      },
+      paint: {
+        'line-color': '#0ea5e9',
+        'line-width': 6,
+        'line-opacity': 1,
+      },
+    })
+  }
 
-  // Main line
-  map.value.addLayer({
-    id: 'route-line-solid',
-    type: 'line',
-    source: 'route',
-    layout: {
-      'line-cap': 'round',
-      'line-join': 'round',
-      visibility: 'none',
-    },
-    paint: {
-      'line-color': '#0ea5e9',
-      'line-width': 6,
-      'line-opacity': 1,
-    },
-  })
-
-  // ----- Preview route: dashed sunset-orange -----
-  map.value.addLayer({
-    id: 'route-line-preview',
-    type: 'line',
-    source: 'route',
-    layout: {
-      'line-cap': 'round',
-      'line-join': 'round',
-      visibility: 'none',
-    },
-    paint: {
-      'line-color': '#fb923c',
-      'line-width': 5,
-      'line-opacity': 0.9,
-      'line-dasharray': [2, 1.5],
-    },
-  })
+  if (!map.value.getLayer('route-line-preview')) {
+    map.value.addLayer({
+      id: 'route-line-preview',
+      type: 'line',
+      source: 'route',
+      layout: {
+        'line-cap': 'round',
+        'line-join': 'round',
+        visibility: 'none',
+      },
+      paint: {
+        'line-color': '#fb923c',
+        'line-width': 5,
+        'line-opacity': 0.9,
+        'line-dasharray': [2, 1.5],
+      },
+    })
+  }
 }
 
 function updateRouteLayerVisibility() {
@@ -455,14 +507,19 @@ watch(routeMode, () => updateRouteLayerVisibility())
 // ROUTE FETCH
 // =========================================================================
 async function fetchRoute(fromLngLat, toLngLat) {
+  // Cancel any previous request.
   if (routeAbortController) routeAbortController.abort()
-  routeAbortController = new AbortController()
+
+  const controller = new AbortController()
+  routeAbortController = controller
 
   routeLoading.value = true
   routeError.value = ''
   routeMeta.value = null
+  routeGeojson.value = null
+  drawRoute()
 
-  // OSRM expects lon,lat order — NOT lat,lon
+  // OSRM expects lon,lat order — NOT lat,lon.
   const [fromLng, fromLat] = fromLngLat
   const [toLng, toLat] = toLngLat
 
@@ -471,11 +528,14 @@ async function fetchRoute(fromLngLat, toLngLat) {
     `?overview=full&geometries=geojson&steps=false&annotations=false`
 
   try {
-    const res = await fetch(url, { signal: routeAbortController.signal })
+    const res = await fetch(url, { signal: controller.signal })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
     const data = await res.json()
     if (!data.routes || !data.routes.length) throw new Error('No route found')
+
+    // Another fetch has taken over since we started — discard this result.
+    if (routeAbortController !== controller) return
 
     const route = data.routes[0]
 
@@ -491,13 +551,19 @@ async function fetchRoute(fromLngLat, toLngLat) {
     drawRoute()
   } catch (e) {
     if (e.name === 'AbortError') return
+    if (routeAbortController !== controller) return
+
     console.error('[ResponderMapTab] route fetch failed', e)
     routeError.value = 'Could not calculate route.'
     routeGeojson.value = null
     routeMeta.value = null
     drawRoute()
   } finally {
-    routeLoading.value = false
+    // Only the *latest* controller may reset loading state.
+    if (routeAbortController === controller) {
+      routeLoading.value = false
+      routeAbortController = null
+    }
   }
 }
 
@@ -564,15 +630,11 @@ function changeStyle(key) {
 }
 
 function closeIncidentSheet() {
-  selectedIncident.value = null
+  selectedIncidentId.value = null
   acceptError.value = ''
   clearRoute()
 }
 
-/**
- * Fits the map so both the user and the incident are visible, with
- * generous bottom padding so the bottom sheet doesn't cover them.
- */
 function fitUserAndIncident(incident) {
   if (!map.value || !incident?.location) return
 
@@ -608,65 +670,80 @@ function fitUserAndIncident(incident) {
   })
 }
 
-async function openDetail(incident) {
-  selectedIncident.value = incident
+/**
+ * Opens the detail sheet for an incident by ID.
+ * Always looks the incident up from the live mapIncidents array so the
+ * sheet reflects the current state.
+ */
+function openDetail(id) {
+  if (!id) return
+
+  selectedIncidentId.value = id
   acceptError.value = ''
   routeError.value = ''
 
-  fitUserAndIncident(incident)
+  const inc = selectedIncident.value
+  if (!inc) return
 
-  if (userPosition.value && incident.location) {
-    await fetchRoute(
+  fitUserAndIncident(inc)
+
+  // Don't compute a route to another responder's incident.
+  if (inc._group === 'other') {
+    clearRoute()
+    return
+  }
+
+  if (userPosition.value && inc.location) {
+    fetchRoute(
       [userPosition.value.lng, userPosition.value.lat],
-      [incident.location.longitude, incident.location.latitude]
+      [inc.location.longitude, inc.location.latitude]
     )
-  } else {
-    routeError.value = userPosition.value
-      ? ''
-      : 'Enable location to see the route.'
+  } else if (!userPosition.value) {
+    routeError.value = 'Enable location to see the route.'
   }
 }
 
 async function onAcceptFromSheet() {
-  if (!selectedIncident.value || acceptingId.value) return
   const inc = selectedIncident.value
-  acceptingId.value = inc.id
+  if (!inc || acceptingId.value) return
+
+  const id = inc.id
+  acceptingId.value = id
   acceptError.value = ''
 
+  // Optimistic: flip to "mine" immediately.
+  optimisticAcceptedIds.value = new Set([
+    ...optimisticAcceptedIds.value,
+    id,
+  ])
+
   try {
-    await acceptIncident(inc.id, {
+    await acceptIncident(id, {
       uid: auth.user?.uid,
       fullName: auth.profile?.fullName || '',
     })
-
-    // Optimistically flip the local reference so the sheet immediately
-    // reflects the new state (no need to wait for Firestore's echo).
-    selectedIncident.value = {
-      ...inc,
-      _group: 'mine',
-      status: 'accepted',
-    }
-
-    // Route should now render as solid blue (routeMode flips automatically
-    // because it's computed from selectedIncident).
-    updateRouteLayerVisibility()
+    // Firestore echo will clear the optimistic flag via the watcher.
+    // routeMode flips automatically because selectedIncident._group
+    // is now 'mine' — the route layer swaps from dashed orange to
+    // solid blue without any extra work here.
   } catch (e) {
     console.error('[ResponderMapTab] accept failed', e)
     acceptError.value = 'Could not accept. Try again.'
+
+    // Roll back optimistic flag.
+    const next = new Set(optimisticAcceptedIds.value)
+    next.delete(id)
+    optimisticAcceptedIds.value = next
   } finally {
     acceptingId.value = null
   }
 }
 
-/**
- * Hands off to the OS for real turn-by-turn navigation.
- */
 function openExternalNavigation() {
-  if (!selectedIncident.value?.location) return
-  const lat = selectedIncident.value.location.latitude
-  const lng = selectedIncident.value.location.longitude
-
-  // Try Google Maps universal link first — works on both platforms.
+  const inc = selectedIncident.value
+  if (!inc?.location) return
+  const lat = inc.location.latitude
+  const lng = inc.location.longitude
   const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`
   window.open(url, '_blank', 'noopener')
 }
@@ -846,7 +923,6 @@ function formatDuration(seconds) {
         class="sheet-root"
         role="dialog"
         aria-modal="true"
-        @click.self="closeIncidentSheet"
       >
         <div class="sheet-backdrop" @click="closeIncidentSheet" />
         <div class="sheet">
@@ -906,10 +982,7 @@ function formatDuration(seconds) {
               </div>
             </div>
 
-            <p
-              v-else-if="routeError"
-              class="route-error"
-            >
+            <p v-else-if="routeError" class="route-error">
               {{ routeError }}
             </p>
 
@@ -919,7 +992,9 @@ function formatDuration(seconds) {
 
             <div class="sheet-row">
               <span class="sheet-label">Barangay</span>
-              <span class="sheet-value">{{ selectedIncident.barangay || '—' }}</span>
+              <span class="sheet-value">
+                {{ selectedIncident.barangay || '—' }}
+              </span>
             </div>
 
             <div v-if="selectedIncident.citizenName" class="sheet-row">
@@ -960,7 +1035,7 @@ function formatDuration(seconds) {
             </template>
 
             <!-- Mine → offer Navigate -->
-            <template v-else>
+            <template v-else-if="selectedIncident._group === 'mine'">
               <button class="btn btn--ghost" @click="closeIncidentSheet">
                 Close
               </button>
@@ -970,6 +1045,16 @@ function formatDuration(seconds) {
                 @click="openExternalNavigation"
               >
                 🧭 Navigate
+              </button>
+            </template>
+
+            <!-- Other responders' incidents → Close only -->
+            <template v-else>
+              <button
+                class="btn btn--primary"
+                @click="closeIncidentSheet"
+              >
+                Close
               </button>
             </template>
           </footer>
@@ -1506,8 +1591,6 @@ function formatDuration(seconds) {
 <style>
 /* ============================================================
    USER LOCATION MARKER — single element, everything explicit.
-   See MapTab.vue for the full explanation; this is the same
-   pattern.
    ============================================================ */
 .user-marker-dot {
   position: absolute;
@@ -1517,7 +1600,7 @@ function formatDuration(seconds) {
   width: 20px;
   height: 20px;
   box-sizing: border-box;
-  margin: -10px 0 0 -10px;   /* centers the 20×20 on (0, 0) */
+  margin: -10px 0 0 -10px;
 
   border-radius: 50%;
   background: #2f9e73;
@@ -1643,7 +1726,7 @@ function formatDuration(seconds) {
               0 4px 10px rgba(0, 0, 0, 0.4);
 }
 
-/* MapLibre controls — glass treatment to match the new theme */
+/* MapLibre controls — glass treatment */
 .maplibregl-ctrl-group {
   background: rgba(10, 22, 40, 0.72) !important;
   backdrop-filter: blur(16px) saturate(140%);
@@ -1672,4 +1755,4 @@ function formatDuration(seconds) {
   bottom: calc(env(safe-area-inset-bottom, 0px) + 88px) !important;
   right: 12px !important;
 }
-</style>
+</style>s
