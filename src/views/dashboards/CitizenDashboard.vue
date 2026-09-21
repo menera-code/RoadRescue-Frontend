@@ -17,91 +17,124 @@ const showProfile = ref(false)
 
 /* ==================================================================
  * Location permission gate
- * Shows a blocking-ish modal when the device/browser has location
- * off or denied, so the user is forced to re-enable it.
+ * Shows a modal when location is off/denied/blocked. On Android the
+ * native dialog only fires when we actually call getCurrentPosition(),
+ * so we probe first and classify the failure afterwards.
  * ================================================================== */
 const DISMISS_KEY = 'citizen:location-prompt-dismissed'
 
 const showLocationModal = ref(false)
-// 'prompt' | 'granted' | 'denied' | 'insecure' | 'unsupported'
+// 'prompt' | 'granted' | 'denied' | 'insecure' | 'unsupported' | 'stuck'
 const locationState = ref('prompt')
 const isRequesting = ref(false)
 const isEmbedded = ref(false)
+const isAndroid = ref(false)
 
 let permissionStatus = null
 
 const canUseGeolocation = () =>
   typeof navigator !== 'undefined' && 'geolocation' in navigator
 
-/** Android WebView / in-app browsers (FB, IG, LINE…) handle permissions differently */
+/**
+ * Detect in-app / WebView browsers that frequently have a broken
+ * geolocation bridge on Android (Facebook, Instagram, LINE, generic wv).
+ */
 function detectEmbeddedBrowser() {
   const ua = navigator.userAgent || ''
-  return (
-    /Android/i.test(ua) &&
-    (/;\s*wv\)/i.test(ua) || /FBAN|FBAV|Instagram|Line\//i.test(ua))
-  )
+  const android = /Android/i.test(ua)
+  const webview =
+    /;\s*wv\)/i.test(ua) ||
+    /FBAN|FBAV|FB_IAB|Instagram|Line\//i.test(ua) ||
+    /Twitter|MicroMessenger|KAKAOTALK/i.test(ua)
+  return { android, webview }
 }
 
-async function syncPermissionState() {
-  // Browsers refuse geolocation on plain http://
-  if (!window.isSecureContext) {
-    locationState.value = 'insecure'
-    return
-  }
-
-  if (!canUseGeolocation()) {
-    locationState.value = 'unsupported'
-    return
-  }
-
-  // Safari / older WebViews have no Permissions API — assume we must ask
-  if (!navigator.permissions?.query) {
-    if (locationState.value !== 'granted') locationState.value = 'prompt'
-    return
-  }
-
-  try {
-    permissionStatus = await navigator.permissions.query({ name: 'geolocation' })
-    locationState.value = permissionStatus.state
-
-    permissionStatus.onchange = () => {
-      locationState.value = permissionStatus.state
-      if (permissionStatus.state === 'granted') {
-        showLocationModal.value = false
-      }
+/**
+ * The only reliable way to (re)trigger the native permission dialog on
+ * Android is to actually call getCurrentPosition(). We wrap it in a
+ * Promise so we can reason about the outcome deterministically.
+ */
+function probeLocation(timeout = 15000) {
+  return new Promise((resolve) => {
+    if (!canUseGeolocation()) {
+      resolve({ ok: false, reason: 'unsupported' })
+      return
     }
-  } catch {
-    // Some browsers throw for the 'geolocation' descriptor
-    if (locationState.value !== 'granted') locationState.value = 'prompt'
-  }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ ok: true, pos }),
+      (err) => {
+        if (err.code === 1 /* PERMISSION_DENIED */) {
+          resolve({ ok: false, reason: 'denied' })
+        } else if (err.code === 2 /* POSITION_UNAVAILABLE */) {
+          // OS-level GPS / location services is off
+          resolve({ ok: false, reason: 'unavailable' })
+        } else {
+          resolve({ ok: false, reason: 'timeout' })
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout,
+        maximumAge: 0,
+      }
+    )
+  })
 }
 
-/** Triggers the *native* permission prompt */
-function requestLocation() {
-  if (!canUseGeolocation()) {
-    locationState.value = 'unsupported'
-    return
-  }
-
+/**
+ * Try the real thing first, then classify the failure so we can show
+ * the right guidance to the user.
+ */
+async function requestLocation() {
+  if (isRequesting.value) return
   isRequesting.value = true
 
-  navigator.geolocation.getCurrentPosition(
-    () => {
-      isRequesting.value = false
-      locationState.value = 'granted'
-      showLocationModal.value = false
-      sessionStorage.removeItem(DISMISS_KEY)
-    },
-    (error) => {
-      isRequesting.value = false
-      if (error.code === error.PERMISSION_DENIED) {
-        // Permanently denied → the browser won't ask again, show instructions
-        locationState.value = 'denied'
-      }
-      showLocationModal.value = true
-    },
-    { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
-  )
+  // 1) Real attempt — this is what pops the native dialog
+  const result = await probeLocation()
+
+  if (result.ok) {
+    isRequesting.value = false
+    locationState.value = 'granted'
+    showLocationModal.value = false
+    sessionStorage.removeItem(DISMISS_KEY)
+    return
+  }
+
+  // 2) Failed → figure out WHY so we can show the right message
+  if (!window.isSecureContext) {
+    locationState.value = 'insecure'
+    isRequesting.value = false
+    showLocationModal.value = true
+    return
+  }
+
+  if (result.reason === 'unsupported') {
+    locationState.value = 'unsupported'
+  } else if (result.reason === 'unavailable') {
+    // OS-level Location toggle is off
+    locationState.value = 'denied'
+  } else if (result.reason === 'denied') {
+    // Cross-check Permissions API — if it says granted but read failed,
+    // we're in the classic Android WebView "stuck" state.
+    let apiState = null
+    try {
+      const status = await navigator.permissions?.query?.({ name: 'geolocation' })
+      apiState = status?.state ?? null
+    } catch {}
+
+    if (apiState === 'granted' || (apiState === 'prompt' && isEmbedded.value)) {
+      locationState.value = 'stuck'
+    } else {
+      locationState.value = 'denied'
+    }
+  } else {
+    // timeout
+    locationState.value = isEmbedded.value ? 'stuck' : 'denied'
+  }
+
+  isRequesting.value = false
+  showLocationModal.value = true
 }
 
 function dismissLocationModal() {
@@ -109,32 +142,83 @@ function dismissLocationModal() {
   sessionStorage.setItem(DISMISS_KEY, '1')
 }
 
-/** Coming back from Android Settings → re-check the permission */
+/** Android: force-open the current URL in Chrome via an intent:// URL. */
+function openInChrome() {
+  const url = window.location.href
+  const bare = url.replace(/^https?:\/\//, '')
+  const scheme = url.startsWith('https://') ? 'https' : 'http'
+  const intentUrl =
+    `intent://${bare}#Intent;scheme=${scheme};` +
+    `package=com.android.chrome;end`
+
+  // Fallback if Chrome isn't installed
+  const fallback = setTimeout(() => {
+    window.location.href = url
+  }, 800)
+
+  window.addEventListener(
+    'pagehide',
+    () => clearTimeout(fallback),
+    { once: true }
+  )
+  window.location.href = intentUrl
+}
+
+/** Re-check when the user returns from Android Settings. */
 async function handleVisibility() {
   if (document.visibilityState !== 'visible') return
+  if (locationState.value === 'granted') return
 
-  await syncPermissionState()
-
-  if (locationState.value === 'granted') {
+  const result = await probeLocation(6000)
+  if (result.ok) {
+    locationState.value = 'granted'
     showLocationModal.value = false
-    return
-  }
-
-  if (sessionStorage.getItem(DISMISS_KEY) !== '1') {
-    showLocationModal.value = true
+    sessionStorage.removeItem(DISMISS_KEY)
   }
 }
 
 onMounted(async () => {
-  isEmbedded.value = detectEmbeddedBrowser()
+  const env = detectEmbeddedBrowser()
+  isEmbedded.value = env.webview
+  isAndroid.value = env.android
   document.addEventListener('visibilitychange', handleVisibility)
 
-  await syncPermissionState()
+  if (!window.isSecureContext) {
+    locationState.value = 'insecure'
+    showLocationModal.value = true
+    return
+  }
 
-  if (locationState.value === 'granted') return
+  if (!canUseGeolocation()) {
+    locationState.value = 'unsupported'
+    showLocationModal.value = true
+    return
+  }
+
+  // Silent probe — if we already have access, no modal at all
+  const result = await probeLocation(5000)
+  if (result.ok) {
+    locationState.value = 'granted'
+    return
+  }
+
   if (sessionStorage.getItem(DISMISS_KEY) === '1') return
 
+  locationState.value = 'prompt'
   showLocationModal.value = true
+
+  // Best-effort watcher so we auto-close if the user grants elsewhere
+  try {
+    permissionStatus = await navigator.permissions?.query?.({ name: 'geolocation' })
+    if (permissionStatus) {
+      permissionStatus.onchange = () => {
+        if (permissionStatus.state === 'granted') {
+          locationState.value = 'granted'
+          showLocationModal.value = false
+        }
+      }
+    }
+  } catch {}
 })
 
 onBeforeUnmount(() => {
@@ -145,36 +229,36 @@ onBeforeUnmount(() => {
 /* ---------- Modal copy ---------- */
 const modalTitle = computed(() => {
   switch (locationState.value) {
-    case 'denied':
-      return 'Location access is blocked'
-    case 'insecure':
-      return 'Location needs a secure connection'
-    case 'unsupported':
-      return 'Location isn’t available'
-    default:
-      return 'Allow location access'
+    case 'denied':      return 'Location access is blocked'
+    case 'insecure':    return 'Location needs a secure connection'
+    case 'unsupported': return 'Location isn’t available'
+    case 'stuck':       return 'Location is enabled but not responding'
+    default:            return 'Allow location access'
   }
 })
 
 const modalMessage = computed(() => {
   switch (locationState.value) {
     case 'denied':
-      return 'Your phone is blocking location for this page, so the map and nearby reports can’t load. Turn it back on in your device settings.'
+      return 'Your phone is blocking location for this page. Turn it on for this browser in your device settings, then come back.'
     case 'insecure':
-      return 'Browsers only share your location over a secure (HTTPS) connection. Please reopen this page using https://.'
+      return 'Browsers only share location over HTTPS. Please reopen this page using https://.'
     case 'unsupported':
       return 'This device or browser doesn’t support location services.'
+    case 'stuck':
+      return 'Your device says location is allowed, but the browser still can’t read it. This usually happens inside an in-app browser. Open this page in Chrome to fix it.'
     default:
-      return 'We use your location to show nearby reports on the map and to tag the exact spot on the reports you send. It’s only used while you’re using the app.'
+      return 'We use your location to show nearby reports on the map and to tag the exact spot on reports you send. It’s only used while you’re using the app.'
   }
 })
 
 const canRetry = computed(() =>
-  ['prompt', 'denied'].includes(locationState.value)
+  ['prompt', 'denied', 'stuck'].includes(locationState.value)
 )
 
 const actionLabel = computed(() => {
   if (isRequesting.value) return 'Checking…'
+  if (locationState.value === 'stuck') return 'Try again'
   return locationState.value === 'denied' ? 'Try again' : 'Allow location'
 })
 </script>
@@ -240,7 +324,10 @@ const actionLabel = computed(() => {
         <div class="loc-card">
           <div
             class="loc-icon"
-            :class="{ 'loc-icon--warn': locationState === 'denied' }"
+            :class="{
+              'loc-icon--warn':
+                locationState === 'denied' || locationState === 'stuck',
+            }"
           >
             <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
               <path
@@ -262,6 +349,7 @@ const actionLabel = computed(() => {
           <h2 id="loc-title" class="loc-title">{{ modalTitle }}</h2>
           <p id="loc-desc" class="loc-text">{{ modalMessage }}</p>
 
+          <!-- Denied: device Settings path -->
           <ol v-if="locationState === 'denied'" class="loc-steps">
             <li>Open your phone’s <strong>Settings</strong></li>
             <li>
@@ -275,19 +363,54 @@ const actionLabel = computed(() => {
             <li>Come back here and tap <strong>Try again</strong></li>
           </ol>
 
+          <!-- Stuck: in-app browser escape hatch -->
+          <template v-if="locationState === 'stuck'">
+            <ol class="loc-steps">
+              <li>Tap the <strong>⋮</strong> menu in the top-right</li>
+              <li>
+                Choose <strong>Open in browser</strong> /
+                <strong>Open in Chrome</strong>
+              </li>
+              <li>Allow location when Chrome asks</li>
+            </ol>
+            <p v-if="isEmbedded" class="loc-hint">
+              The in-app browser you’re using doesn’t pass location through.
+              Chrome does.
+            </p>
+          </template>
+
           <p v-if="locationState === 'denied' && isEmbedded" class="loc-hint">
-            Tip: open this page directly in Chrome for a smoother permission
-            prompt.
+            Tip: opening this page directly in Chrome makes the permission
+            prompt work reliably.
           </p>
 
           <div class="loc-actions">
+            <!-- Primary action varies by state -->
             <button
-              v-if="canRetry"
+              v-if="locationState === 'stuck' && isAndroid"
+              class="loc-btn loc-btn--primary"
+              @click="openInChrome"
+            >
+              Open in Chrome
+            </button>
+
+            <button
+              v-else-if="canRetry"
               class="loc-btn loc-btn--primary"
               :disabled="isRequesting"
               @click="requestLocation"
             >
               {{ actionLabel }}
+            </button>
+
+            <!-- Secondary retry for 'stuck' -->
+            <button
+              v-if="locationState === 'stuck'"
+              class="loc-btn loc-btn--ghost"
+              :disabled="isRequesting"
+              @click="requestLocation"
+            >
+              {{ isRequesting ? 'Checking…' : 'Try again anyway' }}
             </button>
 
             <button class="loc-btn loc-btn--ghost" @click="dismissLocationModal">
