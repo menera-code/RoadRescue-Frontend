@@ -63,8 +63,8 @@ const DEFAULT_STYLE_KEY = 'bright'
 // DATA — my reports (every status, incl. unverified)
 // =========================================================================
 const { incidents: myReports, loading: reportsLoading } = useIncidents({
-  statuses: null,        // all statuses
-  scope: 'createdByMe',  // only incidents where citizenUid == my uid
+  statuses: null,
+  scope: 'createdByMe',
 })
 
 // =========================================================================
@@ -90,7 +90,7 @@ const currentStyleKey = ref(
 let hasAutoFit = false
 
 let userMarker = null
-const reportMarkers = new Map() // id → maplibregl.Marker
+const reportMarkers = new Map()
 
 function currentStyleOption() {
   return (
@@ -209,8 +209,6 @@ function requestUserLocation() {
           locationError.value = 'Could not get your location.'
       }
     },
-    // maximumAge: 0 → always fetch a fresh GPS reading. Otherwise the
-    // browser can hand back a position up to 30s old and the dot lags.
     { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
   )
 }
@@ -220,17 +218,23 @@ function dropUserMarker(lng, lat) {
   if (userMarker) userMarker.remove()
 
   // ---------------------------------------------------------------------
-  // Two-element structure:
-  //   outer .user-dot-anchor → MapLibre positions this via translate().
-  //     We must NOT set position/top/left/transform on it.
-  //   inner .user-dot        → visual dot, absolutely centered on the
-  //     anchor origin via margin offsets. No transform, ever.
+  // Single zero-size element. MapLibre writes its positioning
+  // `transform: translate(x, y)` directly onto this node.
+  //
+  // The dot and pulse are drawn by ::before and ::after pseudo-elements
+  // that are absolutely positioned at (0, 0) of this element and offset
+  // by negative margins so their visual center sits on the coordinate.
+  //
+  // No transform is applied by us anywhere — MapLibre's translate is the
+  // ONLY transform on the tree, so it can never desync from the map.
   // ---------------------------------------------------------------------
   const el = document.createElement('div')
-  el.className = 'user-dot-anchor'
-  el.innerHTML = `<span class="user-dot"></span>`
+  el.className = 'user-dot'
 
-  userMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
+  userMarker = new maplibregl.Marker({
+    element: el,
+    anchor: 'center',
+  })
     .setLngLat([lng, lat])
     .addTo(map.value)
 }
@@ -508,7 +512,6 @@ const reportCount = computed(() => myReports.value.length)
   <section class="map-tab">
     <div ref="mapContainer" class="map-canvas" />
 
-    <!-- Loading overlay -->
     <Transition name="fade">
       <div v-if="loading" class="loading-overlay">
         <div class="loading-spinner" aria-hidden="true" />
@@ -516,7 +519,6 @@ const reportCount = computed(() => myReports.value.length)
       </div>
     </Transition>
 
-    <!-- Error overlay -->
     <Transition name="fade">
       <div v-if="loadError" class="error-overlay">
         <p class="error-text">{{ loadError }}</p>
@@ -526,7 +528,6 @@ const reportCount = computed(() => myReports.value.length)
       </div>
     </Transition>
 
-    <!-- My-reports pill -->
     <Transition name="fade">
       <div v-if="!loading && reportCount > 0" class="reports-pill">
         <span class="reports-pill__dot" aria-hidden="true" />
@@ -536,7 +537,6 @@ const reportCount = computed(() => myReports.value.length)
       </div>
     </Transition>
 
-    <!-- Top-right floating controls -->
     <div class="top-controls">
       <button
         class="ctrl-btn"
@@ -611,12 +611,10 @@ const reportCount = computed(() => myReports.value.length)
       </button>
     </div>
 
-    <!-- Location error toast -->
     <Transition name="fade">
       <div v-if="locationError" class="toast">{{ locationError }}</div>
     </Transition>
 
-    <!-- Empty state -->
     <Transition name="fade">
       <div
         v-if="!loading && !reportCount && !reportsLoading"
@@ -629,7 +627,6 @@ const reportCount = computed(() => myReports.value.length)
       </div>
     </Transition>
 
-    <!-- Attribution button -->
     <button
       class="attrib-btn"
       aria-label="Map attribution"
@@ -638,9 +635,6 @@ const reportCount = computed(() => myReports.value.length)
       ©
     </button>
 
-    <!-- ============================================================
-         Report detail sheet
-         ============================================================ -->
     <Transition name="sheet">
       <div
         v-if="selectedReport"
@@ -750,7 +744,6 @@ const reportCount = computed(() => myReports.value.length)
       </div>
     </Transition>
 
-    <!-- Style picker -->
     <Transition name="fade">
       <div
         v-if="showStylePicker"
@@ -797,7 +790,6 @@ const reportCount = computed(() => myReports.value.length)
       </div>
     </Transition>
 
-    <!-- Attribution popover -->
     <Transition name="fade">
       <div
         v-if="showAttrib"
@@ -842,7 +834,6 @@ const reportCount = computed(() => myReports.value.length)
   height: 100%;
 }
 
-/* ---------- Loading / Error ---------- */
 .loading-overlay,
 .error-overlay {
   position: absolute;
@@ -875,7 +866,6 @@ const reportCount = computed(() => myReports.value.length)
   text-align: center;
 }
 
-/* ---------- Reports pill ---------- */
 .reports-pill {
   position: absolute;
   top: calc(env(safe-area-inset-top, 0px) + 12px);
@@ -902,7 +892,6 @@ const reportCount = computed(() => myReports.value.length)
   box-shadow: 0 0 0 4px rgba(230, 57, 70, 0.25);
 }
 
-/* ---------- Top controls ---------- */
 .top-controls {
   position: absolute;
   top: calc(env(safe-area-inset-top, 0px) + 12px);
@@ -934,7 +923,6 @@ const reportCount = computed(() => myReports.value.length)
   border-color: var(--primary);
 }
 
-/* ---------- Toast ---------- */
 .toast {
   position: absolute;
   bottom: calc(env(safe-area-inset-bottom, 0px) + 90px);
@@ -953,7 +941,6 @@ const reportCount = computed(() => myReports.value.length)
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 
-/* ---------- Empty hint ---------- */
 .empty-hint {
   position: absolute;
   bottom: calc(env(safe-area-inset-bottom, 0px) + 96px);
@@ -976,7 +963,6 @@ const reportCount = computed(() => myReports.value.length)
 }
 .empty-hint__text { line-height: 1.5; }
 
-/* ---------- Attribution button ---------- */
 .attrib-btn {
   position: absolute;
   left: 12px;
@@ -999,7 +985,6 @@ const reportCount = computed(() => myReports.value.length)
 }
 .attrib-btn:active { transform: scale(0.9); }
 
-/* ---------- Report sheet ---------- */
 .sheet-root {
   position: absolute;
   inset: 0;
@@ -1111,7 +1096,6 @@ const reportCount = computed(() => myReports.value.length)
 .sheet-foot .btn { flex: 1; }
 .sheet-foot .btn--ghost { flex: 0.8; }
 
-/* ---------- Status chip ---------- */
 .status-chip {
   display: inline-block;
   font-size: 0.6875rem;
@@ -1128,7 +1112,6 @@ const reportCount = computed(() => myReports.value.length)
 .status-chip--cancelled  { color: var(--text-dim); background: var(--bg-input); }
 .status-chip--muted      { color: var(--text-muted); background: var(--bg-input); }
 
-/* ---------- Style picker ---------- */
 .picker-overlay {
   position: absolute;
   inset: 0;
@@ -1193,7 +1176,6 @@ const reportCount = computed(() => myReports.value.length)
 .style-hint { font-size: 0.6875rem; color: var(--text-muted); margin-top: 1px; }
 .style-check { color: var(--primary); flex-shrink: 0; display: grid; place-items: center; }
 
-/* ---------- Attribution popover ---------- */
 .attrib-overlay {
   position: absolute;
   inset: 0;
@@ -1235,7 +1217,6 @@ const reportCount = computed(() => myReports.value.length)
 }
 .attrib-text a { color: var(--primary); text-decoration: underline; }
 
-/* ---------- Fade ---------- */
 .fade-enter-active,
 .fade-leave-active { transition: opacity 0.2s ease; }
 .fade-enter-from,
@@ -1247,65 +1228,83 @@ const reportCount = computed(() => myReports.value.length)
      ============================================================ -->
 <style>
 /* ============================================================
-   USER LOCATION DOT
+   USER LOCATION DOT — single zero-size element.
 
-   Two-element structure:
-     .user-dot-anchor  → given to MapLibre. It writes position:absolute
-                         + transform: translate(x, y) on this node.
-                         We must NEVER set position/top/left/transform
-                         here, or we override MapLibre and the dot drifts
-                         with the map during zoom.
-     .user-dot         → inner visual dot, centered on the anchor's
-                         (0,0) via negative margins (no transform).
-                         Pulse is a box-shadow animation only.
+   Why this works where the two-element version didn't:
+     • MapLibre writes its positioning `transform: translate(x, y)`
+       onto the element we hand it.
+     • MapLibre only adds its own `.maplibregl-marker` class when it
+       creates the element itself — NOT when we supply one. So we
+       MUST declare `position: absolute; top: 0; left: 0` ourselves,
+       otherwise the element falls into document flow and drifts.
+     • The dot and pulse are `::before` / `::after` pseudo-elements
+       of that element. They're part of the same layout node, so
+       they can't create separate compositor layers. They're
+       positioned by `margin` (never `transform`), so there is
+       nothing to desync from MapLibre's translate.
+
+   Result: only ONE transform exists on the whole tree — MapLibre's.
    ============================================================ */
-.user-dot-anchor {
-  /* Intentionally empty for positioning.
-     MapLibre adds .maplibregl-marker which supplies position:absolute.
-     Any positioning CSS here will break zoom sync. */
+.user-dot {
+  /* Explicit positioning — do NOT rely on MapLibre adding its class. */
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
   pointer-events: none;
+  will-change: transform;
+  /* No transform here — MapLibre owns it. */
 }
 
-.user-dot {
+/* Shared geometry for both pseudo-elements. */
+.user-dot::before,
+.user-dot::after {
+  content: '';
   position: absolute;
   top: 0;
   left: 0;
   width: 14px;
   height: 14px;
-  margin: -7px 0 0 -7px;   /* center the 14px dot on the anchor origin */
+  margin: -7px 0 0 -7px;  /* center on the marker's (0,0) origin */
   border-radius: 50%;
+  pointer-events: none;
+}
+
+/* ::before — expanding pulse ring (box-shadow only). */
+.user-dot::before {
+  background: transparent;
+  z-index: 1;
+  animation: user-pulse 2s ease-out infinite;
+}
+
+/* ::after — solid green dot. */
+.user-dot::after {
   background: #2f9e73;
   border: 2.5px solid #fff;
-  pointer-events: none;
-  animation: user-pulse 2s ease-out infinite;
-  /* No transform here — ever. */
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  z-index: 2;
 }
 
 @keyframes user-pulse {
   0% {
-    box-shadow:
-      0 2px 6px rgba(0, 0, 0, 0.35),
-      0 0 0 0 rgba(47, 158, 115, 0.65);
+    box-shadow: 0 0 0 0 rgba(47, 158, 115, 0.65);
   }
   70% {
-    box-shadow:
-      0 2px 6px rgba(0, 0, 0, 0.35),
-      0 0 0 18px rgba(47, 158, 115, 0);
+    box-shadow: 0 0 0 18px rgba(47, 158, 115, 0);
   }
   100% {
-    box-shadow:
-      0 2px 6px rgba(0, 0, 0, 0.35),
-      0 0 0 18px rgba(47, 158, 115, 0);
+    box-shadow: 0 0 0 18px rgba(47, 158, 115, 0);
   }
 }
 
 /* ============================================================
    REPORT MARKER — teardrop pin, tip at the coordinate.
-   Outer <button> is transform-free so MapLibre's positioning
-   transform is never fought by a CSS transition.
    ============================================================ */
 .inc-marker {
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 40px;
   height: 52px;
   padding: 0;
@@ -1316,6 +1315,7 @@ const reportCount = computed(() => myReports.value.length)
   display: block;
   -webkit-tap-highlight-color: transparent;
   outline: none;
+  will-change: transform;
 }
 
 .inc-marker--unverified { --pin: #f59e0b; }
@@ -1398,9 +1398,6 @@ const reportCount = computed(() => myReports.value.length)
               0 4px 10px rgba(0, 0, 0, 0.4);
 }
 
-/* ============================================================
-   MapLibre controls
-   ============================================================ */
 .maplibregl-ctrl-group {
   background: rgba(18, 28, 46, 0.92) !important;
   backdrop-filter: blur(10px);
