@@ -63,11 +63,11 @@ const STORAGE_KEY = 'rr:mapStyle'
 const DEFAULT_STYLE_KEY = 'bright'
 
 // =========================================================================
-// MY REPORTS (all statuses — citizen's own)
+// DATA — my reports (every status, incl. unverified)
 // =========================================================================
 const { incidents: myReports, loading: reportsLoading } = useIncidents({
-  statuses: null,          // every status, incl. 'unverified'
-  scope: 'createdByMe',    // only incidents where citizenUid == my uid
+  statuses: null,        // all statuses
+  scope: 'createdByMe',  // only incidents where citizenUid == my uid
 })
 
 // =========================================================================
@@ -89,6 +89,9 @@ const selectedReport = ref(null)
 const currentStyleKey = ref(
   localStorage.getItem(STORAGE_KEY) || DEFAULT_STYLE_KEY
 )
+
+// Prevents the map from re-fitting to reports on every data change
+let hasAutoFit = false
 
 let userMarker = null
 const reportMarkers = new Map() // id → maplibregl.Marker
@@ -112,6 +115,7 @@ onMounted(async () => {
       requestUserLocation()
       renderReportMarkers()
       fitToMyReports({ animate: false })
+      hasAutoFit = true
     })
   } else {
     requestUserLocation()
@@ -184,7 +188,7 @@ function requestUserLocation() {
       userPosition.value = { lng: longitude, lat: latitude, accuracy }
       dropUserMarker(longitude, latitude)
 
-      // Only auto-fly to the user if we have no reports to frame.
+      // Only fly to the user if we have nothing else to frame.
       if (!myReports.value.length) {
         map.value?.flyTo({
           center: [longitude, latitude],
@@ -220,7 +224,10 @@ function dropUserMarker(lng, lat) {
 
   const el = document.createElement('div')
   el.className = 'user-dot'
-  el.innerHTML = `<span class="user-dot__pulse"></span><span class="user-dot__core"></span>`
+  el.innerHTML = `
+    <span class="user-dot__pulse"></span>
+    <span class="user-dot__core"></span>
+  `
 
   userMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
     .setLngLat([lng, lat])
@@ -245,25 +252,41 @@ function renderReportMarkers() {
 
   // Add or update markers
   for (const inc of myReports.value) {
-    if (!inc.location) continue
-    const lng = inc.location.longitude
-    const lat = inc.location.latitude
-    const tone = statusTone(inc.status)
+    const loc = inc.location
+    if (!loc) continue
 
+    const lat = Number(loc.latitude ?? loc.lat)
+    const lng = Number(loc.longitude ?? loc.lng)
+
+    // Skip broken coordinates (missing, NaN, or Firestore origin)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
+    if (lat === 0 && lng === 0) continue
+
+    const tone = statusTone(inc.status)
     let marker = reportMarkers.get(inc.id)
+
     if (marker) {
-      marker.setLngLat([lng, lat])
+      // Cheap no-op if unchanged
+      const cur = marker.getLngLat()
+      if (cur.lng !== lng || cur.lat !== lat) {
+        marker.setLngLat([lng, lat])
+      }
       const el = marker.getElement()
-      el.className = `inc-marker inc-marker--${tone}`
-      el.dataset.status = inc.status
+      const wantedClass = `inc-marker inc-marker--${tone}`
+      if (el.className !== wantedClass) {
+        el.className = wantedClass
+      }
     } else {
-      const el = createReportMarkerElement(inc)
+      const el = createReportMarkerElement(inc, tone)
       el.addEventListener('click', (ev) => {
         ev.stopPropagation()
         selectedReport.value = inc
       })
 
-      marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+      marker = new maplibregl.Marker({
+        element: el,
+        anchor: 'bottom',   // ← tip of the pin points at the coordinate
+      })
         .setLngLat([lng, lat])
         .addTo(map.value)
 
@@ -272,24 +295,34 @@ function renderReportMarkers() {
   }
 }
 
-function createReportMarkerElement(inc) {
+function createReportMarkerElement(inc, tone) {
   const el = document.createElement('button')
   el.type = 'button'
-  el.className = `inc-marker inc-marker--${statusTone(inc.status)}`
+  el.className = `inc-marker inc-marker--${tone}`
   el.setAttribute('aria-label', `${typeLabel(inc.type)} — tap for details`)
 
+  // Structure matches the CSS: pulse, main icon, tail triangle
   el.innerHTML = `
-    <span class="inc-marker__pulse"></span>
-    <span class="inc-marker__icon">${typeIcon(inc.type)}</span>
+    <span class="inc-marker__pulse" aria-hidden="true"></span>
+    <span class="inc-marker__icon" aria-hidden="true">${typeIcon(inc.type)}</span>
+    <span class="inc-marker__tail" aria-hidden="true"></span>
   `
+
   return el
 }
 
-// Re-render whenever the incident list changes (new report, status update)
+// Re-render when data changes — cheap because we only touch changed markers
 watch(
   myReports,
   () => {
-    if (map.value?.loaded()) renderReportMarkers()
+    if (!map.value?.loaded()) return
+    renderReportMarkers()
+
+    // One-time auto-fit when the first report arrives after mount
+    if (!hasAutoFit && myReports.value.length) {
+      fitToMyReports({ animate: true })
+      hasAutoFit = true
+    }
   },
   { deep: false }
 )
@@ -299,10 +332,20 @@ watch(
 // =========================================================================
 function fitToMyReports({ animate = true } = {}) {
   if (!map.value) return
-  const withLoc = myReports.value.filter((i) => i.location)
+
+  const withLoc = myReports.value
+    .map((i) => {
+      const loc = i.location
+      if (!loc) return null
+      const lat = Number(loc.latitude ?? loc.lat)
+      const lng = Number(loc.longitude ?? loc.lng)
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+      if (lat === 0 && lng === 0) return null
+      return { lat, lng }
+    })
+    .filter(Boolean)
 
   if (!withLoc.length) {
-    // Nothing of ours on the map — fall back to city view.
     map.value.flyTo({
       center: CALAPAN_CENTER,
       zoom: DEFAULT_ZOOM,
@@ -313,9 +356,8 @@ function fitToMyReports({ animate = true } = {}) {
   }
 
   if (withLoc.length === 1) {
-    const only = withLoc[0]
     map.value.flyTo({
-      center: [only.location.longitude, only.location.latitude],
+      center: [withLoc[0].lng, withLoc[0].lat],
       zoom: 16,
       duration: animate ? 700 : 0,
       essential: true,
@@ -324,11 +366,9 @@ function fitToMyReports({ animate = true } = {}) {
   }
 
   const bounds = new maplibregl.LngLatBounds()
-  withLoc.forEach((i) =>
-    bounds.extend([i.location.longitude, i.location.latitude])
-  )
+  withLoc.forEach((p) => bounds.extend([p.lng, p.lat]))
   map.value.fitBounds(bounds, {
-    padding: 70,
+    padding: 80,
     duration: animate ? 700 : 0,
     maxZoom: 16,
   })
@@ -373,7 +413,7 @@ function changeStyle(key) {
   map.value.setStyle(option.style)
 
   map.value.once('styledata', () => {
-    // setStyle() wipes DOM overlays on some MapLibre versions.
+    // setStyle() wipes DOM overlays on some MapLibre versions
     if (userPosition.value) {
       dropUserMarker(userPosition.value.lng, userPosition.value.lat)
     }
@@ -468,7 +508,6 @@ function closeReport() {
   selectedReport.value = null
 }
 
-// Reusable helper for the report count badge in the header
 const reportCount = computed(() => myReports.value.length)
 </script>
 
@@ -476,7 +515,7 @@ const reportCount = computed(() => myReports.value.length)
   <section class="map-tab">
     <div ref="mapContainer" class="map-canvas" />
 
-    <!-- Loading overlay (map) -->
+    <!-- Loading overlay -->
     <Transition name="fade">
       <div v-if="loading" class="loading-overlay">
         <div class="loading-spinner" aria-hidden="true" />
@@ -584,7 +623,7 @@ const reportCount = computed(() => myReports.value.length)
       <div v-if="locationError" class="toast">{{ locationError }}</div>
     </Transition>
 
-    <!-- Empty state hint -->
+    <!-- Empty state -->
     <Transition name="fade">
       <div
         v-if="!loading && !reportCount && !reportsLoading"
@@ -676,7 +715,10 @@ const reportCount = computed(() => myReports.value.length)
               </span>
             </div>
 
-            <div v-if="selectedReport.responderName || selectedReport.assignedResponderName" class="sheet-row">
+            <div
+              v-if="selectedReport.responderName || selectedReport.assignedResponderName"
+              class="sheet-row"
+            >
               <span class="sheet-label">Responder</span>
               <span class="sheet-value">
                 {{ selectedReport.assignedResponderName || selectedReport.responderName }}
@@ -686,8 +728,15 @@ const reportCount = computed(() => myReports.value.length)
             <div v-if="selectedReport.location" class="sheet-row">
               <span class="sheet-label">Coordinates</span>
               <span class="sheet-value sheet-value--mono">
-                {{ selectedReport.location.latitude.toFixed(5) }},
-                {{ selectedReport.location.longitude.toFixed(5) }}
+                {{ Number(selectedReport.location.latitude).toFixed(5) }},
+                {{ Number(selectedReport.location.longitude).toFixed(5) }}
+              </span>
+            </div>
+
+            <div v-if="selectedReport.accuracy" class="sheet-row">
+              <span class="sheet-label">GPS accuracy</span>
+              <span class="sheet-value">
+                ± {{ Math.round(selectedReport.accuracy) }} m
               </span>
             </div>
           </div>
@@ -810,14 +859,12 @@ const reportCount = computed(() => myReports.value.length)
   place-items: center;
   z-index: 5;
 }
-
 .error-overlay {
   flex-direction: column;
   gap: 16px;
   padding: 40px 24px;
   text-align: center;
 }
-
 .loading-spinner {
   width: 36px;
   height: 36px;
@@ -828,7 +875,6 @@ const reportCount = computed(() => myReports.value.length)
   margin-bottom: 12px;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-
 .loading-text,
 .error-text {
   font-size: 0.875rem;
@@ -873,7 +919,6 @@ const reportCount = computed(() => myReports.value.length)
   gap: 8px;
   z-index: 4;
 }
-
 .ctrl-btn {
   width: 44px;
   height: 44px;
@@ -886,7 +931,7 @@ const reportCount = computed(() => myReports.value.length)
   display: grid;
   place-items: center;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: transform 0.15s ease, opacity 0.15s ease, border-color 0.15s ease;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
 }
 .ctrl-btn:active { transform: scale(0.92); }
@@ -1208,133 +1253,162 @@ const reportCount = computed(() => myReports.value.length)
      GLOBAL STYLES — MapLibre DOM lives outside scoped boundary
      ============================================================ -->
 <style>
-/* Pulsing user-location dot */
+/* ============================================================
+   USER LOCATION DOT
+   Outer element must have NO transform / transition / filter —
+   MapLibre owns its positioning transform.
+   ============================================================ */
 .user-dot {
   position: relative;
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
+  width: 26px;
+  height: 26px;
+  pointer-events: none;
 }
+
 .user-dot__core {
-  position: relative;
+  position: absolute;
+  top: 50%;
+  left: 50%;
   width: 14px;
   height: 14px;
+  margin: -7px 0 0 -7px;
   border-radius: 50%;
   background: #2f9e73;
   border: 2.5px solid #fff;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
   z-index: 2;
 }
+
 .user-dot__pulse {
   position: absolute;
-  width: 24px;
-  height: 24px;
+  top: 50%;
+  left: 50%;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
   border-radius: 50%;
   background: #2f9e73;
   opacity: 0.5;
   animation: pulse 1.8s ease-out infinite;
   z-index: 1;
+  transform-origin: center;
 }
+
 @keyframes pulse {
   0%   { transform: scale(0.6); opacity: 0.6; }
   100% { transform: scale(2);   opacity: 0;   }
 }
 
 /* ============================================================
-   REPORT MARKERS — status-aware color + type icon
+   REPORT MARKER — teardrop pin, tip at the coordinate
+   The outer <button> must stay transform-free so MapLibre's
+   positioning transform is never interpolated by a CSS transition.
    ============================================================ */
 .inc-marker {
   position: relative;
   width: 40px;
-  height: 40px;
+  height: 52px;
   padding: 0;
+  margin: 0;
   border: none;
   background: transparent;
   cursor: pointer;
-  display: grid;
-  place-items: center;
-  transition: transform 0.12s ease;
+  display: block;
+  /* ⚠️ No transform, no transition, no filter here. */
   -webkit-tap-highlight-color: transparent;
+  outline: none;
 }
-.inc-marker:active { transform: scale(0.9); }
 
-.inc-marker__icon {
-  position: relative;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 1rem;
-  color: #fff;
-  border: 2.5px solid #fff;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4);
-  z-index: 2;
-  transition: all 0.15s ease;
-}
+/* Colour palette per status — set once, used by icon + tail */
+.inc-marker--unverified { --pin: #f59e0b; }
+.inc-marker--pending    { --pin: #e63946; }
+.inc-marker--active     { --pin: #3b82f6; }
+.inc-marker--resolved   { --pin: #2f9e73; }
+.inc-marker--cancelled  { --pin: #64748b; }
+.inc-marker--muted      { --pin: #64748b; }
+
+/* Soft pulse ring — anchored to the circular head, not the tail */
 .inc-marker__pulse {
   position: absolute;
-  width: 34px;
-  height: 34px;
+  top: 0;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  margin-left: -20px;
   border-radius: 50%;
-  opacity: 0.55;
+  background: var(--pin);
+  opacity: 0.45;
   z-index: 1;
+  pointer-events: none;
+  transform-origin: center;
   animation: marker-pulse 2s ease-out infinite;
 }
+
 @keyframes marker-pulse {
-  0%   { transform: scale(1);   opacity: 0.55; }
-  70%  { transform: scale(1.7); opacity: 0;    }
-  100% { transform: scale(1.7); opacity: 0;    }
+  0%   { transform: scale(1);   opacity: 0.45; }
+  70%  { transform: scale(1.8); opacity: 0;    }
+  100% { transform: scale(1.8); opacity: 0;    }
 }
 
-/* Unverified — amber, awaiting admin review */
-.inc-marker--unverified .inc-marker__icon {
-  background: linear-gradient(160deg, #f5b547, #f59e0b 55%, #c47c08);
+/* Circular head — holds the type icon */
+.inc-marker__icon {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  margin-left: -20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 1.125rem;
+  line-height: 1;
+  color: #fff;
+  background: var(--pin);
+  border: 3px solid #fff;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+  z-index: 2;
+  transform-origin: center;
+  transition: transform 0.12s ease;
+  /* Press feedback lives HERE, never on the outer button */
 }
-.inc-marker--unverified .inc-marker__pulse {
-  background: #f59e0b;
-  animation-duration: 2.2s;
-}
-
-/* Pending — red, dispatched, waiting for accept */
-.inc-marker--pending .inc-marker__icon {
-  background: linear-gradient(160deg, #f14b57, #e63946 55%, #c42d39);
-}
-.inc-marker--pending .inc-marker__pulse {
-  background: #e63946;
-  animation-duration: 1.6s;
-}
-
-/* Active — blue, responder involved */
-.inc-marker--active .inc-marker__icon {
-  background: linear-gradient(160deg, #4f8ff7, #3b82f6 55%, #2563eb);
-}
-.inc-marker--active .inc-marker__pulse {
-  background: #3b82f6;
-  animation-duration: 1.8s;
-}
-
-/* Resolved — green, done */
-.inc-marker--resolved .inc-marker__icon {
-  background: linear-gradient(160deg, #3cb886, #2f9e73 55%, #267a58);
-}
-.inc-marker--resolved .inc-marker__pulse {
-  display: none;
+.inc-marker:active .inc-marker__icon {
+  transform: scale(0.92);
 }
 
-/* Cancelled / muted — gray, no pulse */
-.inc-marker--cancelled .inc-marker__icon,
-.inc-marker--muted .inc-marker__icon {
-  background: linear-gradient(160deg, #64748b, #475569 55%, #334155);
-  opacity: 0.75;
+/* Downward-pointing triangle — its tip is the coordinate */
+.inc-marker__tail {
+  position: absolute;
+  top: 34px;
+  left: 50%;
+  margin-left: -8px;
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 18px solid var(--pin);
+  z-index: 0;
+  pointer-events: none;
+  filter: drop-shadow(0 3px 2px rgba(0, 0, 0, 0.3));
 }
+
+/* Non-pulsing states */
+.inc-marker--resolved .inc-marker__pulse,
 .inc-marker--cancelled .inc-marker__pulse,
 .inc-marker--muted .inc-marker__pulse {
+  animation: none;
   display: none;
 }
 
-/* MapLibre controls */
+/* Focus ring for a11y */
+.inc-marker:focus-visible .inc-marker__icon {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.6),
+              0 4px 10px rgba(0, 0, 0, 0.4);
+}
+
+/* ============================================================
+   MapLibre controls
+   ============================================================ */
 .maplibregl-ctrl-group {
   background: rgba(18, 28, 46, 0.92) !important;
   backdrop-filter: blur(10px);
