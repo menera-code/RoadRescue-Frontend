@@ -74,15 +74,23 @@ const markers = new Map()
 const selectedId = ref(null)
 const showDetail = ref(false)
 
+// Active = needs attention. Since emergencies now come in as 'unverified'
+// (so they also appear in Verify), we include that status here too.
 const activeEmergencies = computed(() =>
   incidents.value.filter((e) =>
-    e.status === 'emergency_pending' || e.status === 'pending' || e.status === 'accepted'
+    e.status === 'unverified' ||
+    e.status === 'emergency_pending' ||
+    e.status === 'pending' ||
+    e.status === 'accepted' ||
+    e.status === 'en_route' ||
+    e.status === 'on_scene'
   )
 )
 const handledEmergencies = computed(() =>
   incidents.value.filter((e) =>
-    e.acknowledgedAt || e.acceptedAt ||
-    e.status === 'resolved' || e.status === 'cancelled'
+    e.status === 'resolved' ||
+    e.status === 'cancelled' ||
+    ((e.acknowledgedAt || e.acceptedAt) && e.status === 'resolved')
   )
 )
 
@@ -216,7 +224,7 @@ function pickBarangay(name) {
 const canDispatch = computed(() => {
   const inc = detailIncident.value
   if (!inc) return false
-  if (inc.status !== 'emergency_pending') return false
+  if (inc.status !== 'unverified' && inc.status !== 'emergency_pending') return false
   return !!detailBarangay.value && !dispatching.value
 })
 
@@ -314,6 +322,7 @@ function openInMaps(loc) {
 
 function statusLabel(s) {
   return {
+    unverified: 'Awaiting review',
     emergency_pending: 'Awaiting dispatch',
     pending: 'Dispatched',
     accepted: 'Responder en route',
@@ -564,7 +573,7 @@ function statusLabel(s) {
           </div>
 
           <footer class="sheet-foot">
-            <template v-if="detailIncident.status === 'emergency_pending'">
+            <template v-if="detailIncident.status === 'unverified' || detailIncident.status === 'emergency_pending'">
               <button
                 class="btn btn--ghost"
                 :disabled="dispatching"
