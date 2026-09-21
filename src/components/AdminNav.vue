@@ -20,6 +20,8 @@ const BOTTOM_RIGHT = [
 ]
 
 const MORE_ITEMS = [
+  { key: 'emergencies', label: 'Emergencies', desc: 'Anonymous SOS + voice',
+    icon: `<svg viewBox="0 0 24 24" fill="none"><path d="M12 2L2 20h20L12 2z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 9v5M12 17.5v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>` },
   { key: 'analytics', label: 'Analytics', desc: 'Charts & metrics',
     icon: `<svg viewBox="0 0 24 24" fill="none"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>` },
   { key: 'insights', label: 'Operational Insights', desc: 'ML analytics & trends',
@@ -82,7 +84,6 @@ function select(key) {
 
   <!-- ============================================================
        MOBILE BOTTOM BAR (≤ 1023px)
-       5 flex children: 2 left tabs · FAB spacer · 2 right tabs
        ============================================================ -->
   <nav class="bottom-nav" aria-label="Admin navigation">
     <button
@@ -208,7 +209,7 @@ function select(key) {
 .verify-fab { display: flex; }
 
 /* ============================================================
-   MOBILE BOTTOM BAR — flex with explicit FAB slot
+   MOBILE BOTTOM BAR
    ============================================================ */
 .bottom-nav {
   position: fixed;
@@ -222,7 +223,6 @@ function select(key) {
   height: 64px;
   padding-bottom: env(safe-area-inset-bottom, 0px);
 
-  /* Fully opaque — content scrolling beneath disappears cleanly */
   background: #121c2e;
   border-top: 1px solid var(--border);
   box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.35);
@@ -269,7 +269,6 @@ function select(key) {
   max-width: 100%;
 }
 
-/* Reserved column where the FAB sits — same width as a tab */
 .bottom-fab-slot {
   flex: 1 1 0;
   min-width: 0;
@@ -347,7 +346,6 @@ function select(key) {
   box-shadow: 0 3px 8px rgba(230, 57, 70, 0.55);
 }
 
-/* Tiny phones — shrink labels + FAB slightly */
 @media (max-width: 380px) {
   .bottom-label { font-size: 0.5625rem; }
   .bottom-icon { width: 20px; height: 20px; }
