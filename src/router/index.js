@@ -9,7 +9,6 @@ const routes = [
     component: () => import('@/views/HomeView.vue'),
     meta: { public: true },
   },
-    // ------------------- Public -------------------
   {
     path: '/sos',
     name: 'sos',
