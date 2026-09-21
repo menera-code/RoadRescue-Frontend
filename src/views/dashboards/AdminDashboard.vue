@@ -11,6 +11,7 @@ import AnalyticsTab from './admin/AnalyticsTab.vue'
 import InsightsTab from './admin/InsightsTab.vue'
 import UsersTab from './admin/UsersTab.vue'
 import AdminProfileTab from './admin/AdminProfileTab.vue'
+import EmergenciesTab from './admin/EmergenciesTab.vue'
 
 const auth = useAuthStore()
 const activeTab = ref('verify')
@@ -43,7 +44,8 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
     <!-- Main content -->
     <main class="admin-content" :class="`admin-content--${activeTab}`">
       <div class="content-inner">
-        <HistoryTab v-if="activeTab === 'history'" />
+        <EmergenciesTab v-if="activeTab === 'emergencies'" />
+        <HistoryTab v-else-if="activeTab === 'history'" />
         <BarangaysTab v-else-if="activeTab === 'barangays'" />
         <AnalyticsTab v-else-if="activeTab === 'analytics'" />
         <VerifyTab v-else-if="activeTab === 'verify'" />
@@ -95,13 +97,6 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
   min-width: 0;
 }
 
-/*
- * CRITICAL: content must reserve enough bottom space for
- *   64px  bottom nav
- * + ~16px FAB overhang above the bar
- * + 16px breathing room
- * = ~100px + safe-area
- */
 .content-inner {
   width: 100%;
   padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px
@@ -125,7 +120,6 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
   .content-inner { max-width: 820px; margin-inline: auto; }
 }
 
-/* Desktop — bottom bar is gone, sidebar takes over */
 @media (min-width: 1024px) {
   .admin-shell { flex-direction: row; }
 
