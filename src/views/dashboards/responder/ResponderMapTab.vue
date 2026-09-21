@@ -85,7 +85,7 @@ const { incidents: otherActiveIncidents } = useIncidents({
 // -------------------------------------------------------------------------
 // Optimistic-accept override.
 //
-// When the responder taps Accept, we don't want to wait for Firestore's
+// When the responder taps Accept we don't want to wait for Firestore's
 // realtime listener to echo the change back — otherwise the sheet keeps
 // showing "Accept Request" and the dashed orange preview route for up to
 // several hundred ms. We track IDs we've accepted locally and treat them
@@ -238,11 +238,6 @@ function initMap() {
       touchZoomRotate: true,
       attributionControl: false,
     })
-
-    map.value.addControl(
-      new maplibregl.NavigationControl({ showCompass: false, showZoom: true }),
-      'bottom-right'
-    )
 
     map.value.on('load', () => {
       loading.value = false
@@ -1725,34 +1720,4 @@ function formatDuration(seconds) {
   box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.6),
               0 4px 10px rgba(0, 0, 0, 0.4);
 }
-
-/* MapLibre controls — glass treatment */
-.maplibregl-ctrl-group {
-  background: rgba(10, 22, 40, 0.72) !important;
-  backdrop-filter: blur(16px) saturate(140%);
-  -webkit-backdrop-filter: blur(16px) saturate(140%);
-  border: 1px solid rgba(255, 255, 255, 0.14) !important;
-  border-radius: 12px !important;
-  overflow: hidden;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
-}
-
-.maplibregl-ctrl-group button {
-  background: transparent !important;
-  color: var(--text) !important;
-  width: 42px !important;
-  height: 42px !important;
-  min-width: 42px !important;
-  min-height: 42px !important;
-  font-size: 20px !important;
-}
-
-.maplibregl-ctrl-group button + button {
-  border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
-}
-
-.maplibregl-ctrl-bottom-right {
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 88px) !important;
-  right: 12px !important;
-}
-</style>s
+</style>
