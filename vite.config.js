@@ -8,9 +8,7 @@ export default defineConfig({
     vue(),
     VitePWA({
       registerType: 'autoUpdate',
-
       includeAssets: ['favicon.ico', 'icons/apple-touch-icon.png'],
-
       manifest: {
         name: 'RoadRescue',
         short_name: 'RoadRescue',
@@ -32,7 +30,6 @@ export default defineConfig({
           },
         ],
       },
-
       workbox: {
         globPatterns: ['**/*.{js,css,ico,png,svg,woff2}'],
         navigateFallback: null,
@@ -40,17 +37,13 @@ export default defineConfig({
         clientsClaim: true,
         cleanupOutdatedCaches: true,
         globIgnores: ['**/sw.js', '**/workbox-*.js', '**/*.map'],
-
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/tiles\.openfreemap\.org\/.*/i,
             handler: 'CacheFirst',
             options: {
               cacheName: 'openfreemap-tiles',
-              expiration: {
-                maxEntries: 500,
-                maxAgeSeconds: 60 * 60 * 24 * 30,
-              },
+              expiration: { maxEntries: 500, maxAgeSeconds: 2592000 },
               cacheableResponse: { statuses: [0, 200] },
             },
           },
@@ -59,10 +52,7 @@ export default defineConfig({
             handler: 'CacheFirst',
             options: {
               cacheName: 'google-satellite-tiles',
-              expiration: {
-                maxEntries: 500,
-                maxAgeSeconds: 60 * 60 * 24 * 14,
-              },
+              expiration: { maxEntries: 500, maxAgeSeconds: 1209600 },
               cacheableResponse: { statuses: [0, 200] },
             },
           },
@@ -71,31 +61,19 @@ export default defineConfig({
             handler: 'StaleWhileRevalidate',
             options: {
               cacheName: 'firebase-storage',
-              expiration: {
-                maxEntries: 200,
-                maxAgeSeconds: 60 * 60 * 24 * 7,
-              },
+              expiration: { maxEntries: 200, maxAgeSeconds: 604800 },
               cacheableResponse: { statuses: [0, 200] },
             },
           },
         ],
       },
-
       devOptions: { enabled: false },
     }),
   ],
-
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
-
-  build: {
-    target: 'es2020',
-    sourcemap: false,
-    chunkSizeWarningLimit: 1200,
-    // No manualChunks — Vite 8 / Rolldown rejects the object form.
-    // Default chunking is fine.
-  },
+  // No `build` block. That's the fix.
 })
