@@ -14,6 +14,9 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
 const CALAPAN_CENTER = [121.1803, 13.4108]
 const DEFAULT_ZOOM = 13
 
+// =========================================================================
+// MAP STYLE OPTIONS
+// =========================================================================
 const SATELLITE_STYLE = {
   version: 8,
   sources: {
@@ -31,6 +34,33 @@ const SATELLITE_STYLE = {
     maxzoom: 19,
   }],
 }
+
+const STYLE_OPTIONS = [
+  {
+    key: 'bright',
+    label: 'Colorful',
+    hint: 'Bright, detailed',
+    preview: 'linear-gradient(135deg, #a8d8ea 0%, #f4e4a1 50%, #b8d4a0 100%)',
+    style: 'https://tiles.openfreemap.org/styles/bright',
+  },
+  {
+    key: 'positron',
+    label: 'Light',
+    hint: 'Minimal, clean',
+    preview: 'linear-gradient(135deg, #f5f5f0 0%, #e8e8e0 100%)',
+    style: 'https://tiles.openfreemap.org/styles/positron',
+  },
+  {
+    key: 'satellite',
+    label: 'Satellite',
+    hint: 'Aerial imagery',
+    preview: 'linear-gradient(135deg, #1a3a2a 0%, #2d5a3f 50%, #4a7a5a 100%)',
+    style: SATELLITE_STYLE,
+  },
+]
+
+const STORAGE_KEY = 'rr:adminMapStyle'
+const DEFAULT_STYLE_KEY = 'satellite' // admins usually prefer aerial for dispatch
 
 // =========================================================================
 // DATA
@@ -115,16 +145,28 @@ const markers = new Map()
 const selectedId = ref(null)
 const showDetail = ref(false)
 
+const showStylePicker = ref(false)
+const currentStyleKey = ref(
+  localStorage.getItem(STORAGE_KEY) || DEFAULT_STYLE_KEY
+)
+
+function currentStyleOption() {
+  return (
+    STYLE_OPTIONS.find((o) => o.key === currentStyleKey.value) ||
+    STYLE_OPTIONS[0]
+  )
+}
+
 function initMap() {
   if (!mapContainer.value) {
     console.warn('[EmergenciesTab] map container not in DOM yet')
     return
   }
-  if (map) return // already initialized
+  if (map) return
 
   map = new maplibregl.Map({
     container: mapContainer.value,
-    style: SATELLITE_STYLE,
+    style: currentStyleOption().style,
     center: CALAPAN_CENTER,
     zoom: DEFAULT_ZOOM,
     pitchWithRotate: false,
@@ -228,6 +270,32 @@ function createMarkerElement(group, type) {
 watch(incidents, () => {
   if (map?.loaded()) renderMarkers()
 })
+
+// =========================================================================
+// STYLE SWITCHING
+// =========================================================================
+function openStylePicker() {
+  showStylePicker.value = true
+}
+
+function changeStyle(key) {
+  if (!map) return
+  const option = STYLE_OPTIONS.find((o) => o.key === key)
+  if (!option) return
+
+  currentStyleKey.value = key
+  localStorage.setItem(STORAGE_KEY, key)
+  map.setStyle(option.style)
+
+  // setStyle() wipes DOM markers on some MapLibre versions — re-add.
+  map.once('styledata', () => {
+    for (const m of markers.values()) m.remove()
+    markers.clear()
+    renderMarkers()
+  })
+
+  showStylePicker.value = false
+}
 
 // =========================================================================
 // NAVIGATION
@@ -471,16 +539,45 @@ function statusLabel(s) {
         </div>
       </div>
 
-      <button class="recenter-btn" aria-label="Fit to all" @click="recenterAll">
-        <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
-          <path
-            d="M3 9V5a2 2 0 0 1 2-2h4M15 3h4a2 2 0 0 1 2 2v4M21 15v4a2 2 0 0 1-2 2h-4M9 21H5a2 2 0 0 1-2-2v-4"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-          />
-        </svg>
-      </button>
+      <!-- Top-right control column -->
+      <div class="map-controls">
+        <button
+          class="map-ctrl-btn"
+          :class="{ 'map-ctrl-btn--active': showStylePicker }"
+          aria-label="Change map style"
+          @click="openStylePicker"
+        >
+          <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
+            <path
+              d="M12 2 2 7l10 5 10-5-10-5Z"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linejoin="round"
+            />
+            <path
+              d="m2 12 10 5 10-5M2 17l10 5 10-5"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
+
+        <button
+          class="map-ctrl-btn"
+          aria-label="Fit to all"
+          @click="recenterAll"
+        >
+          <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
+            <path
+              d="M3 9V5a2 2 0 0 1 2-2h4M15 3h4a2 2 0 0 1 2 2v4M21 15v4a2 2 0 0 1-2 2h-4M9 21H5a2 2 0 0 1-2-2v-4"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
+          </svg>
+        </button>
+      </div>
 
       <div v-if="!loading && !incidents.length" class="map-empty">
         <p class="tiny">No emergencies on the map.</p>
@@ -564,6 +661,54 @@ function statusLabel(s) {
         </ul>
       </section>
     </template>
+
+    <!-- ============================================================
+         STYLE PICKER OVERLAY
+         ============================================================ -->
+    <Transition name="fade">
+      <div
+        v-if="showStylePicker"
+        class="picker-overlay"
+        @click="showStylePicker = false"
+      >
+        <div class="picker-card" @click.stop>
+          <p class="picker-title">Map style</p>
+          <button
+            v-for="opt in STYLE_OPTIONS"
+            :key="opt.key"
+            type="button"
+            class="style-option"
+            :class="{ 'style-option--on': currentStyleKey === opt.key }"
+            @click="changeStyle(opt.key)"
+          >
+            <span
+              class="style-preview"
+              :style="{ background: opt.preview }"
+              aria-hidden="true"
+            />
+            <span class="style-body">
+              <span class="style-label">{{ opt.label }}</span>
+              <span class="style-hint">{{ opt.hint }}</span>
+            </span>
+            <span
+              v-if="currentStyleKey === opt.key"
+              class="style-check"
+              aria-hidden="true"
+            >
+              <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
+                <path
+                  d="M5 13l4 4L19 7"
+                  stroke="currentColor"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </span>
+          </button>
+        </div>
+      </div>
+    </Transition>
 
     <!-- ============================================================
          DETAIL SHEET
@@ -816,11 +961,19 @@ function statusLabel(s) {
 .legend-dot--resolved { background: #2f9e73; }
 .legend-dot--cancelled { background: #64748b; }
 
-.recenter-btn {
+/* Top-right control column */
+.map-controls {
   position: absolute;
   top: 12px;
   right: 12px;
-  width: 40px; height: 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 3;
+}
+.map-ctrl-btn {
+  width: 40px;
+  height: 40px;
   border-radius: 10px;
   background: rgba(10, 22, 40, 0.72);
   backdrop-filter: blur(16px) saturate(140%);
@@ -830,10 +983,14 @@ function statusLabel(s) {
   display: grid;
   place-items: center;
   cursor: pointer;
-  z-index: 3;
-  transition: transform 0.15s ease;
+  transition: all 0.15s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
 }
-.recenter-btn:active { transform: scale(0.92); }
+.map-ctrl-btn:active { transform: scale(0.92); }
+.map-ctrl-btn--active {
+  color: var(--primary-light);
+  border-color: var(--primary-light);
+}
 
 .map-empty {
   position: absolute;
@@ -845,6 +1002,97 @@ function statusLabel(s) {
   pointer-events: none;
   z-index: 2;
   color: #eaf0fa;
+}
+
+/* ---------- Style picker ---------- */
+.picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(3px);
+}
+.picker-card {
+  width: 100%;
+  max-width: 320px;
+  background: linear-gradient(
+    160deg,
+    rgba(20, 41, 67, 0.98) 0%,
+    rgba(10, 22, 40, 0.98) 100%
+  );
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius-lg);
+  padding: 14px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  animation: pop 0.2s ease;
+}
+@keyframes pop {
+  from { transform: scale(0.94); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+.picker-title {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+  padding-left: 4px;
+}
+.style-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+.style-option + .style-option { margin-top: 4px; }
+.style-option:active { transform: scale(0.98); }
+.style-option--on {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--glass-border-strong);
+}
+.style-preview {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  border: 1px solid var(--glass-border);
+}
+.style-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.style-label {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.style-hint {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.style-check {
+  color: var(--accent-light);
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
 }
 
 /* ---------- Sections ---------- */
