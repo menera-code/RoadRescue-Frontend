@@ -12,11 +12,7 @@ const showTerms = ref(false)
 const showResponderInfo = ref(false)
 
 function getHelp() {
-  if (auth.isAuthenticated) {
-    router.push({ name: 'dashboard' })
-    return
-  }
-  router.push({ name: 'register' })
+  router.push({ name: 'sos' })
 }
 </script>
 
