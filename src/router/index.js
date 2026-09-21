@@ -11,12 +11,6 @@ const routes = [
   },
     // ------------------- Public -------------------
   {
-    path: '/',
-    name: 'home',
-    component: () => import('@/views/HomeView.vue'),
-    meta: { public: true },
-  },
-  {
     path: '/sos',
     name: 'sos',
     component: () => import('@/views/EmergencyView.vue'),
