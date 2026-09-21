@@ -62,6 +62,14 @@ const STYLE_OPTIONS = [
 const STORAGE_KEY = 'rr:mapStyle'
 const DEFAULT_STYLE_KEY = 'bright'
 
+// Route layer IDs — kept in one place so cleanup is reliable.
+const ROUTE_SOURCE_ID = 'route'
+const ROUTE_LAYER_IDS = [
+  'route-line-preview',
+  'route-line-solid',
+  'route-line-casing',
+]
+
 // =========================================================================
 // STORE + DATA
 // =========================================================================
@@ -82,15 +90,6 @@ const { incidents: otherActiveIncidents } = useIncidents({
   scope: 'all',
 })
 
-// -------------------------------------------------------------------------
-// Optimistic-accept override.
-//
-// When the responder taps Accept we don't want to wait for Firestore's
-// realtime listener to echo the change back — otherwise the sheet keeps
-// showing "Accept Request" and the dashed orange preview route for up to
-// several hundred ms. We track IDs we've accepted locally and treat them
-// as "mine" until Firestore confirms.
-// -------------------------------------------------------------------------
 const optimisticAcceptedIds = ref(new Set())
 
 const mapIncidents = computed(() => {
@@ -119,7 +118,6 @@ const mapIncidents = computed(() => {
   return out
 })
 
-// Clear optimistic flags as soon as Firestore catches up.
 watch(myIncidents, (list) => {
   if (!optimisticAcceptedIds.value.size) return
   const next = new Set(optimisticAcceptedIds.value)
@@ -148,11 +146,6 @@ const locationError = ref('')
 const showAttrib = ref(false)
 const showStylePicker = ref(false)
 
-// -------------------------------------------------------------------------
-// Selection is by ID. The incident object itself is derived from
-// mapIncidents so it stays in sync with Firestore updates (status changes,
-// admin cancellation, etc.).
-// -------------------------------------------------------------------------
 const selectedIncidentId = ref(null)
 
 const selectedIncident = computed(
@@ -183,13 +176,10 @@ function currentStyleOption() {
   )
 }
 
-// Derived: which route style to render.
-//   'active'  → solid ocean-blue (I've accepted it)
-//   'preview' → dashed sunset-orange (pending / not mine)
 const routeMode = computed(() => {
   const inc = selectedIncident.value
   if (!inc) return null
-  if (inc._group === 'other') return null   // no route for others' incidents
+  if (inc._group === 'other') return null
   return inc._group === 'mine' ? 'active' : 'preview'
 })
 
@@ -199,17 +189,6 @@ const routeMode = computed(() => {
 onMounted(async () => {
   await nextTick()
   initMap()
-
-  if (map.value) {
-    map.value.once('load', () => {
-      requestUserLocation()
-      renderIncidentMarkers()
-      addRouteLayers()
-      updateRouteLayerVisibility()
-    })
-  } else {
-    requestUserLocation()
-  }
 })
 
 onBeforeUnmount(() => {
@@ -241,6 +220,9 @@ function initMap() {
 
     map.value.on('load', () => {
       loading.value = false
+      requestUserLocation()
+      renderIncidentMarkers()
+      ensureRouteLayers()
     })
 
     map.value.on('error', (e) => {
@@ -286,11 +268,6 @@ function dropUserMarker(lng, lat) {
   if (!map.value) return
   if (userMarker) userMarker.remove()
 
-  // Single element, everything explicit. MapLibre only adds the
-  // .maplibregl-marker class to elements IT creates, so we must set
-  // position/top/left ourselves. The pulse is a box-shadow animation
-  // (paint layer), never a transform — so it can't desync from
-  // MapLibre's translate during pan/zoom.
   const el = document.createElement('div')
   el.className = 'user-marker-dot'
 
@@ -335,10 +312,6 @@ function renderIncidentMarkers() {
     } else {
       const el = createIncidentMarkerElement(inc._group, inc.type)
 
-      // Capture the ID *string* — not the incident object. This avoids
-      // the stale-closure bug: if Firestore pushes a fresh object later,
-      // the marker's click handler still refers to the same ID and picks
-      // up the current data from mapIncidents.
       const id = inc.id
       el.addEventListener('click', () => openDetail(id))
 
@@ -387,8 +360,6 @@ watch(mapIncidents, () => {
   if (map.value?.loaded()) renderIncidentMarkers()
 })
 
-// If the selected incident disappears (resolved by admin, removed),
-// close the sheet and clear the route.
 watch(selectedIncident, (inc) => {
   if (!inc && selectedIncidentId.value) {
     selectedIncidentId.value = null
@@ -398,72 +369,113 @@ watch(selectedIncident, (inc) => {
 
 // =========================================================================
 // ROUTE LAYERS
+//
+// Robust layer management:
+//   1. `ensureRouteLayers()` is idempotent — safe to call any time.
+//   2. If the source exists but layers don't (or vice versa), we wipe
+//      everything and re-add from scratch. This avoids a subtle bug where
+//      a partial state after `setStyle()` left the route invisible.
+//   3. Three stacked layers:
+//        route-line-casing  → wide white casing (bottom)
+//        route-line-solid   → blue active route (middle)
+//        route-line-preview → dashed orange preview (top)
+//      The casing makes the route pop on satellite and dark backgrounds.
 // =========================================================================
-function addRouteLayers() {
+function ensureRouteLayers() {
   if (!map.value) return
 
-  // Idempotent — safe to call after style changes.
-  if (!map.value.getSource('route')) {
-    map.value.addSource('route', {
-      type: 'geojson',
-      data: { type: 'FeatureCollection', features: [] },
-    })
+  // Wipe stale state — safe even if nothing exists.
+  for (const id of ROUTE_LAYER_IDS) {
+    if (map.value.getLayer(id)) {
+      try { map.value.removeLayer(id) } catch {}
+    }
+  }
+  if (map.value.getSource(ROUTE_SOURCE_ID)) {
+    try { map.value.removeSource(ROUTE_SOURCE_ID) } catch {}
   }
 
-  if (!map.value.getLayer('route-halo-solid')) {
-    map.value.addLayer({
-      id: 'route-halo-solid',
-      type: 'line',
-      source: 'route',
-      layout: {
-        'line-cap': 'round',
-        'line-join': 'round',
-        visibility: 'none',
-      },
-      paint: {
-        'line-color': 'rgba(10, 22, 40, 0.55)',
-        'line-width': 12,
-        'line-opacity': 0.9,
-      },
-    })
-  }
+  // Fresh source
+  map.value.addSource(ROUTE_SOURCE_ID, {
+    type: 'geojson',
+    data: routeGeojson.value || { type: 'FeatureCollection', features: [] },
+  })
 
-  if (!map.value.getLayer('route-line-solid')) {
-    map.value.addLayer({
-      id: 'route-line-solid',
-      type: 'line',
-      source: 'route',
-      layout: {
-        'line-cap': 'round',
-        'line-join': 'round',
-        visibility: 'none',
-      },
-      paint: {
-        'line-color': '#0ea5e9',
-        'line-width': 6,
-        'line-opacity': 1,
-      },
-    })
-  }
+  // Bottom: light casing around the active route
+  map.value.addLayer({
+    id: 'route-line-casing',
+    type: 'line',
+    source: ROUTE_SOURCE_ID,
+    layout: {
+      'line-cap': 'round',
+      'line-join': 'round',
+      visibility: 'none',
+    },
+    paint: {
+      // Zoom-interpolated casing width — thin when zoomed out, thick when in.
+      'line-width': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        10, 8,
+        14, 12,
+        18, 16,
+      ],
+      'line-color': '#ffffff',
+      'line-opacity': 0.92,
+    },
+  })
 
-  if (!map.value.getLayer('route-line-preview')) {
-    map.value.addLayer({
-      id: 'route-line-preview',
-      type: 'line',
-      source: 'route',
-      layout: {
-        'line-cap': 'round',
-        'line-join': 'round',
-        visibility: 'none',
-      },
-      paint: {
-        'line-color': '#fb923c',
-        'line-width': 5,
-        'line-opacity': 0.9,
-        'line-dasharray': [2, 1.5],
-      },
-    })
-  }
+  // Middle: solid ocean-blue active route
+  map.value.addLayer({
+    id: 'route-line-solid',
+    type: 'line',
+    source: ROUTE_SOURCE_ID,
+    layout: {
+      'line-cap': 'round',
+      'line-join': 'round',
+      visibility: 'none',
+    },
+    paint: {
+      'line-width': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        10, 4,
+        14, 6,
+        18, 8,
+      ],
+      'line-color': '#0ea5e9',
+      'line-opacity': 1,
+    },
+  })
+
+  // Top: dashed sunset-orange preview route
+  map.value.addLayer({
+    id: 'route-line-preview',
+    type: 'line',
+    source: ROUTE_SOURCE_ID,
+    layout: {
+      'line-cap': 'round',
+      'line-join': 'round',
+      visibility: 'none',
+    },
+    paint: {
+      'line-width': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        10, 3,
+        14, 5,
+        18, 7,
+      ],
+      'line-color': '#fb923c',
+      'line-opacity': 0.95,
+      'line-dasharray': [2, 1.5],
+    },
+  })
+
+  // Push current data + visibility immediately.
+  drawRoute()
 }
 
 function updateRouteLayerVisibility() {
@@ -472,11 +484,12 @@ function updateRouteLayerVisibility() {
   const isActive = routeMode.value === 'active'
   const isPreview = routeMode.value === 'preview'
 
+  const casingVis = hasRoute && isActive ? 'visible' : 'none'
   const solidVis = hasRoute && isActive ? 'visible' : 'none'
   const previewVis = hasRoute && isPreview ? 'visible' : 'none'
 
-  if (map.value.getLayer('route-halo-solid')) {
-    map.value.setLayoutProperty('route-halo-solid', 'visibility', solidVis)
+  if (map.value.getLayer('route-line-casing')) {
+    map.value.setLayoutProperty('route-line-casing', 'visibility', casingVis)
   }
   if (map.value.getLayer('route-line-solid')) {
     map.value.setLayoutProperty('route-line-solid', 'visibility', solidVis)
@@ -488,8 +501,9 @@ function updateRouteLayerVisibility() {
 
 function drawRoute() {
   if (!map.value) return
-  const src = map.value.getSource('route')
+  const src = map.value.getSource(ROUTE_SOURCE_ID)
   if (!src) return
+
   src.setData(
     routeGeojson.value || { type: 'FeatureCollection', features: [] }
   )
@@ -502,7 +516,6 @@ watch(routeMode, () => updateRouteLayerVisibility())
 // ROUTE FETCH
 // =========================================================================
 async function fetchRoute(fromLngLat, toLngLat) {
-  // Cancel any previous request.
   if (routeAbortController) routeAbortController.abort()
 
   const controller = new AbortController()
@@ -514,7 +527,6 @@ async function fetchRoute(fromLngLat, toLngLat) {
   routeGeojson.value = null
   drawRoute()
 
-  // OSRM expects lon,lat order — NOT lat,lon.
   const [fromLng, fromLat] = fromLngLat
   const [toLng, toLat] = toLngLat
 
@@ -529,7 +541,6 @@ async function fetchRoute(fromLngLat, toLngLat) {
     const data = await res.json()
     if (!data.routes || !data.routes.length) throw new Error('No route found')
 
-    // Another fetch has taken over since we started — discard this result.
     if (routeAbortController !== controller) return
 
     const route = data.routes[0]
@@ -540,8 +551,8 @@ async function fetchRoute(fromLngLat, toLngLat) {
       properties: {},
     }
     routeMeta.value = {
-      distance: route.distance,   // meters
-      duration: route.duration,   // seconds
+      distance: route.distance,
+      duration: route.duration,
     }
     drawRoute()
   } catch (e) {
@@ -554,7 +565,6 @@ async function fetchRoute(fromLngLat, toLngLat) {
     routeMeta.value = null
     drawRoute()
   } finally {
-    // Only the *latest* controller may reset loading state.
     if (routeAbortController === controller) {
       routeLoading.value = false
       routeAbortController = null
@@ -606,10 +616,14 @@ function changeStyle(key) {
 
   currentStyleKey.value = key
   localStorage.setItem(STORAGE_KEY, key)
-  map.value.setStyle(option.style)
 
-  map.value.once('styledata', () => {
-    // setStyle() wipes sources/layers — re-add everything we own.
+  // Track whether the new style has settled.
+  let settled = false
+  const rehydrate = () => {
+    if (settled || !map.value) return
+    if (!map.value.isStyleLoaded()) return
+    settled = true
+
     if (userPosition.value) {
       dropUserMarker(userPosition.value.lng, userPosition.value.lat)
     }
@@ -617,9 +631,19 @@ function changeStyle(key) {
     incidentMarkers.clear()
     renderIncidentMarkers()
 
-    addRouteLayers()
-    drawRoute()
-  })
+    ensureRouteLayers()
+  }
+
+  map.value.setStyle(option.style)
+
+  // `styledata` fires many times during load; `idle` fires once when the
+  // style is fully settled. We attach both as belt-and-braces — whichever
+  // fires first with a loaded style wins, the flag prevents double-run.
+  map.value.once('styledata', rehydrate)
+  map.value.once('idle', rehydrate)
+
+  // Safety net: if neither fires within 2s, force a rehydrate attempt.
+  setTimeout(rehydrate, 2000)
 
   showStylePicker.value = false
 }
@@ -656,7 +680,7 @@ function fitUserAndIncident(incident) {
   map.value.fitBounds(bounds, {
     padding: {
       top: 90,
-      bottom: 260,   // leave room for the sheet
+      bottom: 260,
       left: 60,
       right: 60,
     },
@@ -665,11 +689,6 @@ function fitUserAndIncident(incident) {
   })
 }
 
-/**
- * Opens the detail sheet for an incident by ID.
- * Always looks the incident up from the live mapIncidents array so the
- * sheet reflects the current state.
- */
 function openDetail(id) {
   if (!id) return
 
@@ -682,7 +701,6 @@ function openDetail(id) {
 
   fitUserAndIncident(inc)
 
-  // Don't compute a route to another responder's incident.
   if (inc._group === 'other') {
     clearRoute()
     return
@@ -706,7 +724,6 @@ async function onAcceptFromSheet() {
   acceptingId.value = id
   acceptError.value = ''
 
-  // Optimistic: flip to "mine" immediately.
   optimisticAcceptedIds.value = new Set([
     ...optimisticAcceptedIds.value,
     id,
@@ -717,15 +734,10 @@ async function onAcceptFromSheet() {
       uid: auth.user?.uid,
       fullName: auth.profile?.fullName || '',
     })
-    // Firestore echo will clear the optimistic flag via the watcher.
-    // routeMode flips automatically because selectedIncident._group
-    // is now 'mine' — the route layer swaps from dashed orange to
-    // solid blue without any extra work here.
   } catch (e) {
     console.error('[ResponderMapTab] accept failed', e)
     acceptError.value = 'Could not accept. Try again.'
 
-    // Roll back optimistic flag.
     const next = new Set(optimisticAcceptedIds.value)
     next.delete(id)
     optimisticAcceptedIds.value = next
@@ -809,7 +821,6 @@ function formatDuration(seconds) {
   <section class="map-tab">
     <div ref="mapContainer" class="map-canvas" />
 
-    <!-- Loading -->
     <Transition name="fade">
       <div v-if="loading" class="loading-overlay">
         <div class="loading-spinner" aria-hidden="true" />
@@ -817,7 +828,6 @@ function formatDuration(seconds) {
       </div>
     </Transition>
 
-    <!-- Error -->
     <Transition name="fade">
       <div v-if="loadError" class="error-overlay">
         <p class="error-text">{{ loadError }}</p>
@@ -827,7 +837,6 @@ function formatDuration(seconds) {
       </div>
     </Transition>
 
-    <!-- Top-right controls -->
     <div class="top-controls">
       <button
         class="ctrl-btn"
@@ -886,7 +895,6 @@ function formatDuration(seconds) {
       </button>
     </div>
 
-    <!-- Legend -->
     <div class="legend">
       <div class="legend-item">
         <span class="legend-dot legend-dot--pending" />
@@ -900,9 +908,16 @@ function formatDuration(seconds) {
         <span class="legend-dot legend-dot--other" />
         <span>Others</span>
       </div>
+      <div class="legend-item legend-item--route">
+        <span class="legend-line legend-line--active" />
+        <span>Route (active)</span>
+      </div>
+      <div class="legend-item legend-item--route">
+        <span class="legend-line legend-line--preview" />
+        <span>Route (preview)</span>
+      </div>
     </div>
 
-    <!-- Attribution -->
     <button
       class="attrib-btn"
       aria-label="Map attribution"
@@ -911,7 +926,6 @@ function formatDuration(seconds) {
       ©
     </button>
 
-    <!-- ---------- Incident detail sheet ---------- -->
     <Transition name="sheet">
       <div
         v-if="selectedIncident"
@@ -950,7 +964,6 @@ function formatDuration(seconds) {
           </header>
 
           <div class="sheet-body">
-            <!-- Route info card -->
             <div v-if="routeLoading" class="route-card route-card--loading">
               <div class="route-spinner" aria-hidden="true" />
               <span class="tiny">Calculating fastest route…</span>
@@ -1011,7 +1024,6 @@ function formatDuration(seconds) {
           </div>
 
           <footer class="sheet-foot">
-            <!-- Pending → offer Accept -->
             <template v-if="selectedIncident._group === 'pending'">
               <button class="btn btn--ghost" @click="closeIncidentSheet">
                 Close
@@ -1029,7 +1041,6 @@ function formatDuration(seconds) {
               </button>
             </template>
 
-            <!-- Mine → offer Navigate -->
             <template v-else-if="selectedIncident._group === 'mine'">
               <button class="btn btn--ghost" @click="closeIncidentSheet">
                 Close
@@ -1043,7 +1054,6 @@ function formatDuration(seconds) {
               </button>
             </template>
 
-            <!-- Other responders' incidents → Close only -->
             <template v-else>
               <button
                 class="btn btn--primary"
@@ -1057,7 +1067,6 @@ function formatDuration(seconds) {
       </div>
     </Transition>
 
-    <!-- ---------- Style picker ---------- -->
     <Transition name="fade">
       <div
         v-if="showStylePicker"
@@ -1102,7 +1111,6 @@ function formatDuration(seconds) {
       </div>
     </Transition>
 
-    <!-- ---------- Attribution ---------- -->
     <Transition name="fade">
       <div v-if="showAttrib" class="attrib-overlay" @click="showAttrib = false">
         <div class="attrib-card" @click.stop>
@@ -1137,7 +1145,6 @@ function formatDuration(seconds) {
   height: 100%;
 }
 
-/* ---------- Loading + Error ---------- */
 .loading-overlay,
 .error-overlay {
   position: absolute;
@@ -1169,7 +1176,6 @@ function formatDuration(seconds) {
   text-align: center;
 }
 
-/* ---------- Top controls ---------- */
 .top-controls {
   position: absolute;
   top: calc(env(safe-area-inset-top, 0px) + 12px);
@@ -1199,7 +1205,6 @@ function formatDuration(seconds) {
 .ctrl-btn:active { transform: scale(0.92); }
 .ctrl-btn--active { color: var(--primary-light); border-color: var(--primary-light); }
 
-/* ---------- Legend ---------- */
 .legend {
   position: absolute;
   top: calc(env(safe-area-inset-top, 0px) + 12px);
@@ -1226,6 +1231,12 @@ function formatDuration(seconds) {
   color: var(--text-muted);
 }
 
+.legend-item--route {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 .legend-dot {
   width: 10px;
   height: 10px;
@@ -1237,7 +1248,21 @@ function formatDuration(seconds) {
 .legend-dot--mine    { background: #2f9e73; }
 .legend-dot--other   { background: #f59e0b; }
 
-/* ---------- Attribution button ---------- */
+.legend-line {
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.legend-line--active { background: #0ea5e9; }
+.legend-line--preview {
+  background: repeating-linear-gradient(
+    90deg,
+    #fb923c 0 4px,
+    transparent 4px 7px
+  );
+}
+
 .attrib-btn {
   position: absolute;
   left: 12px;
@@ -1259,7 +1284,6 @@ function formatDuration(seconds) {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
-/* ---------- Incident detail sheet ---------- */
 .sheet-root {
   position: absolute;
   inset: 0;
@@ -1337,7 +1361,6 @@ function formatDuration(seconds) {
   padding: 16px 20px;
 }
 
-/* ---------- Route card ---------- */
 .route-card {
   display: flex;
   gap: 10px;
@@ -1457,7 +1480,6 @@ function formatDuration(seconds) {
   box-shadow: 0 4px 14px rgba(14, 165, 233, 0.4);
 }
 
-/* ---------- Style picker ---------- */
 .picker-overlay {
   position: absolute;
   inset: 0;
@@ -1528,7 +1550,6 @@ function formatDuration(seconds) {
 
 .style-check { color: var(--accent-light); flex-shrink: 0; }
 
-/* ---------- Attribution ---------- */
 .attrib-overlay {
   position: absolute;
   inset: 0;
@@ -1575,38 +1596,29 @@ function formatDuration(seconds) {
 
 .attrib-text a { color: var(--primary-light); text-decoration: underline; }
 
-/* ---------- Fade ---------- */
 .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 </style>
 
 <!-- ============================================================
-     GLOBAL STYLES (unscoped) — MapLibre DOM lives outside scoped
+     GLOBAL STYLES (unscoped)
      ============================================================ -->
 <style>
-/* ============================================================
-   USER LOCATION MARKER — single element, everything explicit.
-   ============================================================ */
 .user-marker-dot {
   position: absolute;
   top: 0;
   left: 0;
-
   width: 20px;
   height: 20px;
   box-sizing: border-box;
   margin: -10px 0 0 -10px;
-
   border-radius: 50%;
   background: #2f9e73;
   border: 3px solid #ffffff;
-
   box-shadow:
     0 2px 6px rgba(0, 0, 0, 0.35),
     0 0 0 0 rgba(47, 158, 115, 0.65);
-
   animation: user-marker-pulse 2.4s ease-out infinite;
-
   pointer-events: none;
 }
 
@@ -1624,9 +1636,6 @@ function formatDuration(seconds) {
   }
 }
 
-/* ============================================================
-   INCIDENT MARKERS — teardrop pins.
-   ============================================================ */
 .incident-marker {
   position: absolute;
   top: 0;
