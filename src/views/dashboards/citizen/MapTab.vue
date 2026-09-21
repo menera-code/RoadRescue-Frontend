@@ -1,13 +1,16 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import * as maplibregl from 'maplibre-gl'
-import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 import { useIncidents } from '@/composables/useIncidents'
 import MediaGallery from '@/components/MediaGallery.vue'
 
-maplibregl.setWorkerUrl(maplibreWorkerUrl)
+// NOTE: maplibre-gl v3+ bundles its own worker — no setWorkerUrl needed.
+// The old `import maplibreWorkerUrl from '...worker.mjs?worker&url'` line
+// was removed because the path no longer exists in v3+, and the bad asset
+// request was falling through to the SPA fallback (returning index.html
+// with MIME text/html), which killed the whole bundle.
 
 // =========================================================================
 // CONSTANTS
@@ -224,7 +227,9 @@ function dropUserMarker(lng, lat) {
 
   const el = document.createElement('div')
   el.className = 'user-dot'
-  // Single child — no separate pulse span.
+  // Single child — the pulse is painted via box-shadow on the core,
+  // not animated with transform, so it can't desync from MapLibre's
+  // positioning transform during zoom.
   el.innerHTML = `<span class="user-dot__core"></span>`
 
   userMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
@@ -264,7 +269,6 @@ function renderReportMarkers() {
     let marker = reportMarkers.get(inc.id)
 
     if (marker) {
-      // Cheap no-op if unchanged
       const cur = marker.getLngLat()
       if (cur.lng !== lng || cur.lat !== lat) {
         marker.setLngLat([lng, lat])
@@ -283,7 +287,7 @@ function renderReportMarkers() {
 
       marker = new maplibregl.Marker({
         element: el,
-        anchor: 'bottom',   // ← tip of the pin points at the coordinate
+        anchor: 'bottom',   // tip of the pin points at the coordinate
       })
         .setLngLat([lng, lat])
         .addTo(map.value)
@@ -299,7 +303,6 @@ function createReportMarkerElement(inc, tone) {
   el.className = `inc-marker inc-marker--${tone}`
   el.setAttribute('aria-label', `${typeLabel(inc.type)} — tap for details`)
 
-  // Structure matches the CSS: pulse, main icon, tail triangle
   el.innerHTML = `
     <span class="inc-marker__pulse" aria-hidden="true"></span>
     <span class="inc-marker__icon" aria-hidden="true">${typeIcon(inc.type)}</span>
@@ -309,14 +312,12 @@ function createReportMarkerElement(inc, tone) {
   return el
 }
 
-// Re-render when data changes — cheap because we only touch changed markers
 watch(
   myReports,
   () => {
     if (!map.value?.loaded()) return
     renderReportMarkers()
 
-    // One-time auto-fit when the first report arrives after mount
     if (!hasAutoFit && myReports.value.length) {
       fitToMyReports({ animate: true })
       hasAutoFit = true
@@ -411,7 +412,6 @@ function changeStyle(key) {
   map.value.setStyle(option.style)
 
   map.value.once('styledata', () => {
-    // setStyle() wipes DOM overlays on some MapLibre versions
     if (userPosition.value) {
       dropUserMarker(userPosition.value.lng, userPosition.value.lat)
     }
@@ -1309,7 +1309,7 @@ const reportCount = computed(() => myReports.value.length)
   background: transparent;
   cursor: pointer;
   display: block;
-  /* ⚠️ No transform, no transition, no filter here. */
+  /* No transform, no transition, no filter here. */
   -webkit-tap-highlight-color: transparent;
   outline: none;
 }
