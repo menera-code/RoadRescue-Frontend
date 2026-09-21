@@ -1,3 +1,8 @@
+/* ==========================================================================
+   RoadRescue — Calapan / Oriental Mindoro theme
+   Ocean-blue base + sunset-orange accents + glassmorphism
+   ========================================================================== */
+
 /* ---------- Reset ---------- */
 *,
 *::before,
@@ -16,20 +21,42 @@ html {
 body {
   height: 100%;
   min-height: 100dvh;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
-    Arial, sans-serif;
-  background: var(--bg);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  background-color: #0a1628;
+  background-image:
+    /* Warm sunset glow at the top */
+    radial-gradient(
+      ellipse 130% 80% at 50% -20%,
+      rgba(249, 115, 22, 0.22) 0%,
+      transparent 55%
+    ),
+    /* Cool ocean haze at the bottom-right */
+    radial-gradient(
+      ellipse 100% 70% at 100% 105%,
+      rgba(14, 165, 233, 0.18) 0%,
+      transparent 60%
+    ),
+    /* Faint orange corner glow, bottom-left */
+    radial-gradient(
+      ellipse 70% 55% at 0% 70%,
+      rgba(251, 146, 60, 0.06) 0%,
+      transparent 55%
+    );
+  background-attachment: fixed;
   color: var(--text);
   line-height: 1.5;
   overflow-x: hidden;
   overscroll-behavior-y: none;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 #app {
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
 img,
@@ -55,31 +82,97 @@ a {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* ---------- Custom scrollbar ---------- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
 /* ---------- Design tokens ---------- */
 :root {
-  --bg: #0b1220;
-  --bg-elev: #121c2e;
-  --bg-input: #172236;
-  --border: #22304a;
-  --border-focus: #3b82f6;
+  /* Base backgrounds — deep ocean night */
+  --bg: #0a1628;
+  --bg-elev: rgba(30, 58, 95, 0.45);
+  --bg-elev-solid: #142943;
+  --bg-input: rgba(30, 58, 95, 0.55);
 
-  --text: #eaf0fa;
-  --text-muted: #93a3bd;
+  /* Borders — glass edges */
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --border-focus: #fb923c;
+
+  /* Text */
+  --text: #f1f5f9;
+  --text-muted: #94a3b8;
   --text-dim: #64748b;
 
-  --primary: #e63946;
-  --primary-dark: #c42d39;
-  --primary-soft: rgba(230, 57, 70, 0.14);
+  /* Primary — sunset orange (Calapan golden hour) */
+  --primary: #f97316;
+  --primary-dark: #c2410c;
+  --primary-light: #fb923c;
+  --primary-soft: rgba(249, 115, 22, 0.14);
+  --primary-glow: rgba(249, 115, 22, 0.35);
+  --primary-gradient: linear-gradient(
+    135deg,
+    #fb923c 0%,
+    #f97316 55%,
+    #ea580c 100%
+  );
 
-  --accent: #2f9e73;
-  --accent-soft: rgba(47, 158, 115, 0.14);
+  /* Accent — tropical ocean blue */
+  --accent: #0ea5e9;
+  --accent-dark: #0284c7;
+  --accent-light: #38bdf8;
+  --accent-soft: rgba(14, 165, 233, 0.14);
+  --accent-glow: rgba(14, 165, 233, 0.32);
+  --accent-gradient: linear-gradient(
+    135deg,
+    #38bdf8 0%,
+    #0ea5e9 55%,
+    #0284c7 100%
+  );
 
+  /* Semantic */
+  --success: #10b981;
+  --success-soft: rgba(16, 185, 129, 0.14);
   --danger: #ef4444;
+  --danger-soft: rgba(239, 68, 68, 0.14);
+  --warning: #f59e0b;
 
+  /* Glass surfaces */
+  --glass-1: rgba(255, 255, 255, 0.04);
+  --glass-2: rgba(255, 255, 255, 0.06);
+  --glass-3: rgba(255, 255, 255, 0.09);
+  --glass-border: rgba(255, 255, 255, 0.09);
+  --glass-border-strong: rgba(255, 255, 255, 0.14);
+  --glass-blur: 16px;
+  --glass-blur-strong: 24px;
+
+  /* Shadows */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.22);
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.42);
+  --shadow-glow-primary: 0 8px 24px rgba(249, 115, 22, 0.32);
+  --shadow-glow-accent: 0 8px 24px rgba(14, 165, 233, 0.3);
+
+  /* Layout */
   --tap: 48px;
+  --radius-sm: 10px;
   --radius: 14px;
   --radius-lg: 20px;
+  --radius-xl: 28px;
 
+  /* Safe areas */
   --sat: env(safe-area-inset-top, 0px);
   --sab: env(safe-area-inset-bottom, 0px);
   --sal: env(safe-area-inset-left, 0px);
@@ -113,14 +206,32 @@ a {
 .h1 {
   font-size: clamp(1.6rem, 6vw, 2rem);
   font-weight: 750;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+  color: #ffffff;
+  background: linear-gradient(
+    135deg,
+    #ffffff 0%,
+    #f1f5f9 45%,
+    #cbd5e1 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Fallback for browsers that don't support text-fill-color */
+@supports not (-webkit-text-fill-color: transparent) {
+  .h1 {
+    color: #ffffff;
+    background: none;
+  }
 }
 
 .h2 {
   font-size: 1.125rem;
   font-weight: 650;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
 }
 
 .muted {
@@ -146,13 +257,20 @@ a {
   border-radius: var(--radius);
   font-size: 1rem;
   font-weight: 650;
+  letter-spacing: -0.005em;
   cursor: pointer;
-  transition: transform 0.12s ease, background 0.15s ease, opacity 0.15s ease;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease,
+    opacity 0.15s ease;
   user-select: none;
+  position: relative;
+  overflow: hidden;
 }
 
 .btn:active:not(:disabled) {
-  transform: scale(0.97);
+  transform: scale(0.975);
 }
 
 .btn:disabled {
@@ -160,25 +278,60 @@ a {
   cursor: not-allowed;
 }
 
+/* Primary — sunset orange gradient with warm glow */
 .btn--primary {
-  background: var(--primary);
-  color: #fff;
+  background: var(--primary-gradient);
+  color: #ffffff;
+  box-shadow:
+    var(--shadow-glow-primary),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.1);
 }
+
 .btn--primary:active:not(:disabled) {
-  background: var(--primary-dark);
+  background: linear-gradient(135deg, #f97316 0%, #ea580c 60%, #c2410c 100%);
+  box-shadow:
+    0 4px 12px rgba(249, 115, 22, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
+/* Ghost — transparent glass with crisp edge */
 .btn--ghost {
-  background: transparent;
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   color: var(--text);
-  border: 1.5px solid var(--border);
+  border: 1px solid var(--glass-border-strong);
 }
 
+.btn--ghost:active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Soft — elevated glass panel look */
 .btn--soft {
-  background: var(--bg-elev);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.03) 100%
+  );
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   color: var(--text);
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
 }
 
+.btn--soft:active:not(:disabled) {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.11) 0%,
+    rgba(255, 255, 255, 0.05) 100%
+  );
+}
+
+/* Link — plain text button */
 .btn--link {
   background: none;
   border: none;
@@ -187,6 +340,12 @@ a {
   padding: 8px;
   font-weight: 500;
   font-size: 0.9375rem;
+  width: auto;
+}
+
+.btn--link:active:not(:disabled) {
+  color: var(--primary-light);
+  transform: none;
 }
 
 /* ---------- Forms ---------- */
@@ -209,12 +368,22 @@ a {
   min-height: var(--tap);
   padding: 12px 14px;
   font-size: 16px;
-  background: var(--bg-input);
-  border: 1.5px solid var(--border);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.05) 0%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border-strong);
   border-radius: var(--radius);
   color: var(--text);
   outline: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .input::placeholder {
@@ -223,11 +392,19 @@ a {
 
 .input:focus {
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.03) 100%
+  );
+  box-shadow:
+    0 0 0 3px rgba(249, 115, 22, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
 }
 
 .input--error {
   border-color: var(--danger);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
 }
 
 .error-text {
@@ -237,10 +414,19 @@ a {
 
 /* ---------- Cards ---------- */
 .card {
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.07) 0%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   padding: 16px;
+  box-shadow:
+    var(--shadow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
 /* ---------- Misc ---------- */
@@ -260,7 +446,53 @@ a {
   content: '';
   flex: 1;
   height: 1px;
-  background: var(--border);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.12) 50%,
+    transparent 100%
+  );
+}
+
+/* ---------- Glass utility classes ---------- */
+/* Use these on any wrapper that should feel like glass. */
+.glass {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.07) 0%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--glass-border);
+}
+
+.glass--strong {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  border: 1px solid var(--glass-border-strong);
+}
+
+/* ---------- Gradient text ---------- */
+.text-gradient-primary {
+  background: var(--primary-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: var(--primary); /* fallback */
+}
+
+.text-gradient-accent {
+  background: var(--accent-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: var(--accent); /* fallback */
 }
 
 /* ---------- Page transitions ---------- */
@@ -271,4 +503,15 @@ a {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* ---------- Reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
