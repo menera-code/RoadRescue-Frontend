@@ -9,11 +9,6 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { db } from '@/firebase'
 import { searchBarangays } from '@/data/barangays'
 
-// NOTE: maplibre-gl v3+ bundles its own worker — no setWorkerUrl needed.
-// The old worker import was removed because the path no longer exists in
-// v3+, and the bad asset request was falling through to the SPA fallback
-// (returning index.html with MIME text/html), which killed the bundle.
-
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
 
 const CALAPAN_CENTER = [121.1803, 13.4108]
@@ -37,6 +32,9 @@ const SATELLITE_STYLE = {
   }],
 }
 
+// =========================================================================
+// DATA
+// =========================================================================
 const incidents = ref([])
 const loading = ref(true)
 const error = ref('')
@@ -56,6 +54,8 @@ function subscribe() {
           createdAt: data.createdAt?.toDate?.() || null,
           acknowledgedAt: data.acknowledgedAt?.toDate?.() || null,
           acceptedAt: data.acceptedAt?.toDate?.() || null,
+          resolvedAt: data.resolvedAt?.toDate?.() || null,
+          cancelledAt: data.cancelledAt?.toDate?.() || null,
         })
       })
       list.sort((a, b) => (b.createdAt?.getTime() || 0) - (a.createdAt?.getTime() || 0))
@@ -70,14 +70,11 @@ function subscribe() {
   )
 }
 
-const mapContainer = ref(null)
-let map = null
-const markers = new Map()
-const selectedId = ref(null)
-const showDetail = ref(false)
-
-// Active = needs attention. Since emergencies now come in as 'unverified'
-// (so they also appear in Verify), we include that status here too.
+// =========================================================================
+// DERIVED — groups
+// =========================================================================
+// Active = needs attention. Emergencies arrive as 'unverified' so they
+// also appear in the admin Verify queue.
 const activeEmergencies = computed(() =>
   incidents.value.filter((e) =>
     e.status === 'unverified' ||
@@ -88,16 +85,42 @@ const activeEmergencies = computed(() =>
     e.status === 'on_scene'
   )
 )
+
 const handledEmergencies = computed(() =>
   incidents.value.filter((e) =>
     e.status === 'resolved' ||
-    e.status === 'cancelled' ||
-    ((e.acknowledgedAt || e.acceptedAt) && e.status === 'resolved')
+    e.status === 'cancelled'
   )
 )
 
+// Group tag for a given incident — used to color the marker.
+function markerGroup(status) {
+  if (
+    status === 'unverified' ||
+    status === 'emergency_pending' ||
+    status === 'pending' ||
+    status === 'accepted' ||
+    status === 'en_route' ||
+    status === 'on_scene'
+  ) return 'active'
+  if (status === 'resolved') return 'resolved'
+  if (status === 'cancelled') return 'cancelled'
+  return 'muted'
+}
+
+// =========================================================================
+// MAP
+// =========================================================================
+const mapContainer = ref(null)
+let map = null
+const markers = new Map() // id → maplibregl.Marker
+
+const selectedId = ref(null)
+const showDetail = ref(false)
+
 function initMap() {
   if (!mapContainer.value) return
+
   map = new maplibregl.Map({
     container: mapContainer.value,
     style: SATELLITE_STYLE,
@@ -105,19 +128,45 @@ function initMap() {
     zoom: DEFAULT_ZOOM,
     pitchWithRotate: false,
     dragRotate: false,
+    touchZoomRotate: true,
     attributionControl: false,
   })
+
   map.addControl(
     new maplibregl.NavigationControl({ showCompass: false, showZoom: true }),
     'bottom-right'
   )
-  map.on('load', () => renderMarkers())
+
+  map.on('load', () => {
+    renderMarkers()
+  })
+
+  map.on('error', (e) => {
+    if (e?.error?.message && !e.error.message.includes('tile')) {
+      console.error('[EmergenciesTab] MapLibre error:', e)
+    }
+  })
 }
 
+// -------------------------------------------------------------------------
+// Marker rendering — every incident, colored by its group.
+//
+// The pin element:
+//   • MUST have `position: absolute; top: 0; left: 0` — MapLibre only
+//     adds its own positioning class to elements IT creates, so we
+//     declare it ourselves.
+//   • MUST NOT have any transform of its own — MapLibre writes
+//     `transform: translate(x, y)` on this node and it must be the
+//     only transform on the tree.
+//   • Is 40×52 (head 40×40 + tail 12) and uses `anchor: 'bottom'` so
+//     the tail tip sits exactly on the coordinate.
+// -------------------------------------------------------------------------
 function renderMarkers() {
   if (!map) return
-  const currentIds = new Set(activeEmergencies.value.map((i) => i.id))
 
+  const currentIds = new Set(incidents.value.map((i) => i.id))
+
+  // Remove stale markers
   for (const [id, m] of markers.entries()) {
     if (!currentIds.has(id)) {
       m.remove()
@@ -125,42 +174,80 @@ function renderMarkers() {
     }
   }
 
-  for (const inc of activeEmergencies.value) {
-    if (!inc.location) continue
-    const lng = inc.location.longitude
-    const lat = inc.location.latitude
+  for (const inc of incidents.value) {
+    const loc = inc.location
+    if (!loc) continue
+
+    const lat = Number(loc.latitude ?? loc.lat)
+    const lng = Number(loc.longitude ?? loc.lng)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
+    if (lat === 0 && lng === 0) continue
+
+    const group = markerGroup(inc.status)
     const isSelected = inc.id === selectedId.value
 
     let m = markers.get(inc.id)
+
     if (m) {
       const cur = m.getLngLat()
       if (cur.lng !== lng || cur.lat !== lat) {
         m.setLngLat([lng, lat])
       }
       const el = m.getElement()
-      el.classList.toggle('em-marker--selected', isSelected)
+      const wanted =
+        `em-marker em-marker--${group}` + (isSelected ? ' em-marker--selected' : '')
+      if (el.className !== wanted) el.className = wanted
     } else {
-      const el = document.createElement('button')
-      el.className = 'em-marker'
-      el.type = 'button'
-      el.setAttribute('aria-label', 'Emergency')
-      el.innerHTML = `
-        <span class="em-marker__pulse"></span>
-        <span class="em-marker__icon">🚨</span>
-      `
-      el.addEventListener('click', () => openDetail(inc))
-      m = new maplibregl.Marker({ element: el, anchor: 'center' })
+      const el = createMarkerElement(group, inc.status, inc.type)
+
+      // Capture the ID *string* only — avoids the stale-closure bug when
+      // Firestore pushes a fresh object.
+      const id = inc.id
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation()
+        const latest = incidents.value.find((i) => i.id === id)
+        if (latest) openDetail(latest)
+      })
+
+      m = new maplibregl.Marker({
+        element: el,
+        anchor: 'bottom',
+      })
         .setLngLat([lng, lat])
         .addTo(map)
+
       markers.set(inc.id, m)
     }
   }
 }
 
-watch(activeEmergencies, () => {
+function createMarkerElement(group, status, type) {
+  const el = document.createElement('button')
+  el.type = 'button'
+  el.className = `em-marker em-marker--${group}`
+  el.setAttribute('aria-label', 'Emergency incident')
+
+  // Icon picker — emergencies use 🚨, resolved use ✓, cancelled use ✕
+  let icon = '🚨'
+  if (group === 'resolved') icon = '✓'
+  else if (group === 'cancelled') icon = '✕'
+  else if (type === 'emergency') icon = '🚨'
+
+  el.innerHTML = `
+    <span class="em-marker__pulse" aria-hidden="true"></span>
+    <span class="em-marker__icon" aria-hidden="true">${icon}</span>
+    <span class="em-marker__tail" aria-hidden="true"></span>
+  `
+  return el
+}
+
+watch(incidents, () => {
   if (map?.loaded()) renderMarkers()
 })
 
+// =========================================================================
+// MAP NAVIGATION
+// =========================================================================
 function flyTo(incident) {
   if (!map || !incident?.location) return
   map.flyTo({
@@ -173,22 +260,36 @@ function flyTo(incident) {
 
 function recenterAll() {
   if (!map) return
-  const active = activeEmergencies.value.filter((i) => i.location)
-  if (!active.length) {
+
+  const withLoc = incidents.value.filter(
+    (i) =>
+      i.location &&
+      Number.isFinite(i.location.latitude) &&
+      Number.isFinite(i.location.longitude)
+  )
+
+  if (!withLoc.length) {
     map.flyTo({ center: CALAPAN_CENTER, zoom: DEFAULT_ZOOM, duration: 700 })
     return
   }
-  if (active.length === 1) {
-    flyTo(active[0])
+
+  if (withLoc.length === 1) {
+    flyTo(withLoc[0])
     return
   }
+
   const bounds = new maplibregl.LngLatBounds()
-  active.forEach((i) => bounds.extend([i.location.longitude, i.location.latitude]))
+  withLoc.forEach((i) =>
+    bounds.extend([i.location.longitude, i.location.latitude])
+  )
   map.fitBounds(bounds, { padding: 60, duration: 700, maxZoom: 16 })
 }
 
-const detailIncident = computed(() =>
-  incidents.value.find((i) => i.id === selectedId.value) || null
+// =========================================================================
+// DETAIL SHEET
+// =========================================================================
+const detailIncident = computed(
+  () => incidents.value.find((i) => i.id === selectedId.value) || null
 )
 
 const detailBarangay = ref('')
@@ -287,6 +388,9 @@ async function dismiss() {
   }
 }
 
+// =========================================================================
+// LIFECYCLE
+// =========================================================================
 onMounted(subscribe)
 
 onMounted(async () => {
@@ -296,12 +400,18 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (unsub) unsub()
+  for (const m of markers.values()) m.remove()
+  markers.clear()
   if (map) { map.remove(); map = null }
 })
 
+// =========================================================================
+// HELPERS
+// =========================================================================
 function timeAgo(date) {
   if (!date) return ''
-  const diff = Math.floor((Date.now() - date.getTime()) / 1000)
+  const d = date instanceof Date ? date : new Date(date)
+  const diff = Math.floor((Date.now() - d.getTime()) / 1000)
   if (diff < 30) return 'Just now'
   if (diff < 60) return `${diff}s ago`
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
@@ -348,7 +458,10 @@ function statusLabel(s) {
           Anonymous SOS reports. Review, verify location, dispatch responders.
         </p>
       </div>
-      <div class="live-badge" :class="{ 'live-badge--active': activeEmergencies.length > 0 }">
+      <div
+        class="live-badge"
+        :class="{ 'live-badge--active': activeEmergencies.length > 0 }"
+      >
         <span class="live-dot" aria-hidden="true" />
         <span>{{ activeEmergencies.length }} active</span>
       </div>
@@ -364,20 +477,42 @@ function statusLabel(s) {
     </div>
 
     <template v-else>
+      <!-- ============================================================
+           MAP — all incidents, color-coded
+           ============================================================ -->
       <div class="map-wrap">
         <div ref="mapContainer" class="map-canvas" />
+
+        <!-- Legend -->
         <div class="map-legend">
-          <span class="legend-dot" aria-hidden="true" />
-          <span>Active emergency</span>
+          <div class="legend-item">
+            <span class="legend-dot legend-dot--active" />
+            <span>Active</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-dot legend-dot--resolved" />
+            <span>Resolved</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-dot legend-dot--cancelled" />
+            <span>Cancelled</span>
+          </div>
         </div>
+
+        <!-- Recenter -->
         <button class="recenter-btn" aria-label="Fit to all" @click="recenterAll">
           <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
-            <path d="M3 9V5a2 2 0 0 1 2-2h4M15 3h4a2 2 0 0 1 2 2v4M21 15v4a2 2 0 0 1-2 2h-4M9 21H5a2 2 0 0 1-2-2v-4"
-                  stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path
+              d="M3 9V5a2 2 0 0 1 2-2h4M15 3h4a2 2 0 0 1 2 2v4M21 15v4a2 2 0 0 1-2 2h-4M9 21H5a2 2 0 0 1-2-2v-4"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
           </svg>
         </button>
-        <div v-if="!activeEmergencies.length" class="map-empty">
-          <p class="tiny">No active emergencies on the map.</p>
+
+        <div v-if="!incidents.length" class="map-empty">
+          <p class="tiny">No emergencies on the map.</p>
         </div>
       </div>
 
@@ -456,6 +591,9 @@ function statusLabel(s) {
       </template>
     </template>
 
+    <!-- ============================================================
+         DETAIL SHEET
+         ============================================================ -->
     <Transition name="fade">
       <div
         v-if="showDetail && detailIncident"
@@ -568,7 +706,10 @@ function statusLabel(s) {
                     @click="pickBarangay(b)"
                   >{{ b }}</li>
                 </ul>
-                <button class="link" @click="detailBarangayOpen = false; detailBarangayQuery = ''">
+                <button
+                  class="link"
+                  @click="detailBarangayOpen = false; detailBarangayQuery = ''"
+                >
                   Cancel
                 </button>
               </div>
@@ -578,7 +719,10 @@ function statusLabel(s) {
           </div>
 
           <footer class="sheet-foot">
-            <template v-if="detailIncident.status === 'unverified' || detailIncident.status === 'emergency_pending'">
+            <template
+              v-if="detailIncident.status === 'unverified' ||
+                    detailIncident.status === 'emergency_pending'"
+            >
               <button
                 class="btn btn--ghost"
                 :disabled="dispatching"
@@ -627,13 +771,15 @@ function statusLabel(s) {
   letter-spacing: 0.06em;
   padding: 6px 12px;
   border-radius: 99px;
-  background: var(--bg-input, #0f1729);
-  border: 1px solid var(--border, #22304a);
-  color: var(--text-muted, #93a3bd);
+  background: rgba(10, 22, 40, 0.72);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border-strong);
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 .live-badge--active {
-  background: rgba(230, 57, 70, 0.14);
+  background: rgba(230, 57, 70, 0.16);
   border-color: rgba(230, 57, 70, 0.4);
   color: #e63946;
 }
@@ -645,14 +791,16 @@ function statusLabel(s) {
   opacity: 0.4;
 }
 
+/* ---------- Map ---------- */
 .map-wrap {
   position: relative;
   width: 100%;
-  height: 340px;
+  height: 380px;
   border-radius: var(--radius, 14px);
   overflow: hidden;
-  border: 1px solid var(--border, #22304a);
+  border: 1px solid var(--glass-border-strong);
   margin-bottom: 20px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
 }
 .map-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 
@@ -660,26 +808,38 @@ function statusLabel(s) {
   position: absolute;
   top: 12px;
   left: 12px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  background: rgba(18, 28, 46, 0.92);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--border, #22304a);
-  border-radius: 99px;
-  font-size: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  background: rgba(10, 22, 40, 0.72);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 12px;
+  font-size: 0.6875rem;
   font-weight: 650;
-  color: var(--text, #eaf0fa);
+  color: var(--text);
   z-index: 3;
   pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .legend-dot {
   width: 10px; height: 10px;
   border-radius: 50%;
+  flex-shrink: 0;
+}
+.legend-dot--active {
   background: #e63946;
   box-shadow: 0 0 0 4px rgba(230, 57, 70, 0.3);
 }
+.legend-dot--resolved { background: #2f9e73; }
+.legend-dot--cancelled { background: #64748b; }
 
 .recenter-btn {
   position: absolute;
@@ -687,10 +847,11 @@ function statusLabel(s) {
   right: 12px;
   width: 40px; height: 40px;
   border-radius: 10px;
-  background: rgba(18, 28, 46, 0.92);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--border, #22304a);
-  color: var(--text, #eaf0fa);
+  background: rgba(10, 22, 40, 0.72);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--glass-border-strong);
+  color: var(--text);
   display: grid;
   place-items: center;
   cursor: pointer;
@@ -711,6 +872,7 @@ function statusLabel(s) {
   color: #eaf0fa;
 }
 
+/* ---------- Sections ---------- */
 .section { margin-bottom: 22px; }
 .section-title {
   display: flex;
@@ -720,40 +882,51 @@ function statusLabel(s) {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--text-muted, #93a3bd);
+  color: var(--text-muted);
   margin-bottom: 12px;
 }
 .dot { width: 8px; height: 8px; border-radius: 50%; }
-.dot--red { background: #e63946; animation: dot-pulse 1.6s ease-in-out infinite alternate; }
+.dot--red {
+  background: #e63946;
+  animation: dot-pulse 1.6s ease-in-out infinite alternate;
+}
 .dot--green { background: #2f9e73; }
 @keyframes dot-pulse {
   from { opacity: 1; transform: scale(1); }
   to   { opacity: 0.4; transform: scale(0.8); }
 }
 
+/* ---------- Cards ---------- */
 .list { list-style: none; display: flex; flex-direction: column; gap: 10px; }
 
 .card {
-  background: var(--bg-elev, #121c2e);
-  border: 1px solid var(--border, #22304a);
-  border-radius: var(--radius, 14px);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.06) 0%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
   padding: 14px 16px;
   cursor: pointer;
   transition: all 0.15s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 .card:active { transform: scale(0.99); }
 .card--active {
   border-color: rgba(230, 57, 70, 0.5);
   background:
-    radial-gradient(90% 100% at 0% 0%, rgba(230, 57, 70, 0.10) 0%, transparent 70%),
-    var(--bg-elev, #121c2e);
+    radial-gradient(90% 100% at 0% 0%, rgba(230, 57, 70, 0.12) 0%, transparent 70%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
   animation: card-alert 2s ease-in-out infinite alternate;
 }
 .card--selected {
   border-color: #e63946;
   box-shadow: 0 0 0 2px rgba(230, 57, 70, 0.4);
 }
-.card--handled { opacity: 0.65; }
+.card--handled { opacity: 0.7; }
 @keyframes card-alert {
   from { box-shadow: 0 0 0 0 rgba(230, 57, 70, 0.3); }
   to   { box-shadow: 0 0 20px 2px rgba(230, 57, 70, 0.4); }
@@ -767,10 +940,10 @@ function statusLabel(s) {
   margin-bottom: 10px;
 }
 .card-title-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.card-title { font-size: 0.9375rem; font-weight: 700; color: var(--text, #eaf0fa); }
+.card-title { font-size: 0.9375rem; font-weight: 700; color: var(--text); }
 .card-time {
   font-size: 0.75rem;
-  color: var(--text-muted, #93a3bd);
+  color: var(--text-muted);
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -804,9 +977,9 @@ function statusLabel(s) {
   gap: 6px;
   padding: 5px 10px;
   border-radius: 99px;
-  background: rgba(59, 130, 246, 0.12);
-  border: 1px solid rgba(59, 130, 246, 0.3);
-  color: #3b82f6;
+  background: rgba(14, 165, 233, 0.14);
+  border: 1px solid rgba(14, 165, 233, 0.32);
+  color: #38bdf8;
   font-size: 0.75rem;
   font-weight: 650;
   margin-bottom: 10px;
@@ -822,17 +995,18 @@ function statusLabel(s) {
   font-weight: 600;
   padding: 3px 9px;
   border-radius: 6px;
-  background: var(--bg-input, #0f1729);
-  color: var(--text-muted, #93a3bd);
-  border: 1px solid var(--border, #22304a);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  border: 1px solid var(--glass-border);
 }
 .chip--status { color: #f59e0b; border-color: rgba(245, 158, 11, 0.3); }
 .chip--mono {
   font-family: ui-monospace, monospace;
   letter-spacing: 0.04em;
-  color: var(--text, #eaf0fa);
+  color: var(--text);
 }
 
+/* ---------- Sheet ---------- */
 .sheet-root {
   position: fixed;
   inset: 0;
@@ -849,10 +1023,16 @@ function statusLabel(s) {
 }
 .sheet {
   position: relative;
-  background: var(--bg-elev, #121c2e);
+  background: linear-gradient(
+    180deg,
+    rgba(20, 41, 67, 0.98) 0%,
+    rgba(10, 22, 40, 0.98) 100%
+  );
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
   border-top-left-radius: 22px;
   border-top-right-radius: 22px;
-  border: 1px solid var(--border, #22304a);
+  border: 1px solid var(--glass-border-strong);
   border-bottom: none;
   max-height: 92dvh;
   display: flex;
@@ -865,7 +1045,7 @@ function statusLabel(s) {
 }
 .sheet-grabber {
   width: 40px; height: 4px;
-  background: var(--border, #22304a);
+  background: rgba(255, 255, 255, 0.14);
   border-radius: 99px;
   margin: 8px auto 4px;
 }
@@ -875,7 +1055,7 @@ function statusLabel(s) {
   align-items: flex-start;
   gap: 12px;
   padding: 8px 20px 14px;
-  border-bottom: 1px solid var(--border, #22304a);
+  border-bottom: 1px solid var(--glass-border);
 }
 .sheet-head-text { min-width: 0; }
 .sheet-badges {
@@ -895,11 +1075,11 @@ function statusLabel(s) {
 .sheet-close {
   width: 36px; height: 36px;
   border-radius: 50%;
-  background: var(--bg-input, #0f1729);
-  border: none;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--glass-border);
   display: grid;
   place-items: center;
-  color: var(--text-muted, #93a3bd);
+  color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -909,8 +1089,8 @@ function statusLabel(s) {
   padding: 18px 20px;
 }
 .audio-block {
-  background: var(--bg-input, #0f1729);
-  border: 1px solid var(--border, #22304a);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--glass-border);
   border-radius: 12px;
   padding: 12px;
   margin-bottom: 16px;
@@ -925,29 +1105,29 @@ function statusLabel(s) {
   align-items: center;
   gap: 8px;
   padding: 12px;
-  background: var(--bg-input, #0f1729);
+  background: rgba(255, 255, 255, 0.03);
   border-radius: 10px;
   margin-bottom: 16px;
-  color: var(--text-muted, #93a3bd);
+  color: var(--text-muted);
 }
 
 .location-block,
 .barangay-block {
   padding: 14px 0;
-  border-top: 1px solid var(--border, #22304a);
+  border-top: 1px solid var(--glass-border);
 }
 .sheet-section-label {
   font-size: 0.6875rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--text-muted, #93a3bd);
+  color: var(--text-muted);
   margin-bottom: 8px;
 }
 .coords {
   font-family: ui-monospace, monospace;
   font-size: 0.8125rem;
-  color: var(--text, #eaf0fa);
+  color: var(--text);
   margin-bottom: 10px;
   letter-spacing: 0.02em;
 }
@@ -959,10 +1139,10 @@ function statusLabel(s) {
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
-  background: rgba(59, 130, 246, 0.14);
-  border: 1px solid #3b82f6;
+  background: rgba(14, 165, 233, 0.14);
+  border: 1px solid rgba(14, 165, 233, 0.5);
   border-radius: 99px;
-  color: #3b82f6;
+  color: #38bdf8;
   font-size: 0.9375rem;
   font-weight: 700;
   align-self: flex-start;
@@ -975,10 +1155,10 @@ function statusLabel(s) {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  background: rgba(59, 130, 246, 0.22);
+  background: rgba(14, 165, 233, 0.22);
   border: none;
   border-radius: 6px;
-  color: #3b82f6;
+  color: #38bdf8;
   cursor: pointer;
 }
 .suggested-note { color: #2f9e73; }
@@ -992,8 +1172,14 @@ function statusLabel(s) {
   margin-top: 4px;
   max-height: 220px;
   overflow-y: auto;
-  background: var(--bg-elev, #121c2e);
-  border: 1px solid var(--border, #22304a);
+  background: linear-gradient(
+    160deg,
+    rgba(20, 41, 67, 0.98) 0%,
+    rgba(10, 22, 40, 0.98) 100%
+  );
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border-strong);
   border-radius: 12px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   list-style: none;
@@ -1006,12 +1192,13 @@ function statusLabel(s) {
   font-size: 0.9375rem;
   cursor: pointer;
 }
-.barangay-item:hover, .barangay-item:active { background: var(--bg-input, #0f1729); }
+.barangay-item:hover,
+.barangay-item:active { background: rgba(255, 255, 255, 0.06); }
 
 .link {
   background: none;
   border: none;
-  color: #3b82f6;
+  color: #38bdf8;
   text-decoration: underline;
   padding: 8px 0 0;
   font-size: 0.75rem;
@@ -1032,7 +1219,7 @@ function statusLabel(s) {
   display: flex;
   gap: 10px;
   padding: 14px 20px;
-  border-top: 1px solid var(--border, #22304a);
+  border-top: 1px solid var(--glass-border);
 }
 .sheet-foot .btn { flex: 1; }
 .sheet-foot .btn--ghost { flex: 0.5; }
@@ -1041,22 +1228,28 @@ function statusLabel(s) {
   background: linear-gradient(160deg, #ff4d5e 0%, #e63946 55%, #b81f2b 100%);
   color: #fff;
   font-weight: 700;
-  box-shadow: 0 4px 12px rgba(230, 57, 70, 0.35);
+  box-shadow: 0 4px 12px rgba(230, 57, 70, 0.4);
 }
 .btn--danger:active:not(:disabled) { transform: scale(0.97); }
 .btn--danger:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .state-block {
-  background: var(--bg-elev, #121c2e);
-  border: 1px dashed var(--border, #22304a);
-  border-radius: var(--radius, 14px);
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.05) 0%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px dashed var(--glass-border-strong);
+  border-radius: var(--radius);
   padding: 40px 24px;
   text-align: center;
 }
 .state-spinner {
   width: 28px; height: 28px;
   border-radius: 50%;
-  border: 3px solid var(--border, #22304a);
+  border: 3px solid rgba(255, 255, 255, 0.1);
   border-top-color: #e63946;
   animation: spin 0.8s linear infinite;
   margin: 0 auto 12px;
@@ -1071,11 +1264,11 @@ function statusLabel(s) {
 
 @media (min-width: 640px) {
   .head .h1 { font-size: 1.75rem; }
-  .map-wrap { height: 420px; }
+  .map-wrap { height: 460px; }
   .sheet-root { justify-content: center; align-items: center; padding: 24px; }
   .sheet {
     border-radius: 20px;
-    border-bottom: 1px solid var(--border, #22304a);
+    border-bottom: 1px solid var(--glass-border-strong);
     width: 100%;
     max-width: 560px;
     max-height: 88dvh;
@@ -1089,18 +1282,31 @@ function statusLabel(s) {
 @media (min-width: 1024px) {
   .head .h1 { font-size: 2rem; }
   .head .muted { font-size: 1rem; }
-  .map-wrap { height: 480px; }
+  .map-wrap { height: 520px; }
 }
 </style>
 
+<!-- ============================================================
+     GLOBAL STYLES (unscoped) — MapLibre DOM lives outside scoped
+     ============================================================ -->
 <style>
 /* ============================================================
-   EMERGENCY MARKER — teardrop pin, tip at the coordinate
-   Outer element stays transform-free so MapLibre's positioning
-   transform is never fought by a CSS transition.
+   EMERGENCY MARKER — teardrop pin with anchor: 'bottom'.
+
+   Three rules that make this bulletproof:
+     1. `position: absolute; top: 0; left: 0` — MapLibre only adds
+        its positioning class to elements IT creates. Since we supply
+        the element, we declare positioning ourselves.
+     2. NO transform of our own on the outer element. MapLibre writes
+        `transform: translate(x, y)` on it and that must be the only
+        transform on the tree — nothing to desync from.
+     3. The pulse is a box-shadow animation (paint layer), never a
+        transform (compositor layer).
    ============================================================ */
 .em-marker {
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 40px;
   height: 52px;
   padding: 0;
@@ -1111,10 +1317,15 @@ function statusLabel(s) {
   display: block;
   -webkit-tap-highlight-color: transparent;
   outline: none;
-  transition: none;
 }
 
-/* Soft pulse ring anchored to the circular head */
+/* Colour per state — set once, shared by icon + tail + pulse */
+.em-marker--active    { --pin: #e63946; --pin-dark: #b81f2b; }
+.em-marker--resolved  { --pin: #2f9e73; --pin-dark: #1e6b4d; }
+.em-marker--cancelled { --pin: #64748b; --pin-dark: #3f4c5e; }
+.em-marker--muted     { --pin: #64748b; --pin-dark: #3f4c5e; }
+
+/* Soft pulse ring — anchored to the head, only animates box-shadow */
 .em-marker__pulse {
   position: absolute;
   top: 0;
@@ -1123,18 +1334,22 @@ function statusLabel(s) {
   height: 40px;
   margin-left: -20px;
   border-radius: 50%;
-  background: #e63946;
-  opacity: 0.55;
+  background: transparent;
   z-index: 1;
   pointer-events: none;
-  transform-origin: center;
   animation: em-pulse 1.8s ease-out infinite;
 }
 
 @keyframes em-pulse {
-  0%   { transform: scale(1);   opacity: 0.55; }
-  70%  { transform: scale(1.9); opacity: 0;    }
-  100% { transform: scale(1.9); opacity: 0;    }
+  0% {
+    box-shadow: 0 0 0 0 rgba(230, 57, 70, 0.65);
+  }
+  70% {
+    box-shadow: 0 0 0 20px rgba(230, 57, 70, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 20px rgba(230, 57, 70, 0);
+  }
 }
 
 /* Circular head */
@@ -1149,40 +1364,72 @@ function statusLabel(s) {
   display: grid;
   place-items: center;
   font-size: 1.125rem;
+  line-height: 1;
   color: #fff;
-  background: linear-gradient(160deg, #ff4d5e, #e63946 55%, #b81f2b);
+  background: linear-gradient(160deg, var(--pin), var(--pin-dark));
   border: 3px solid #fff;
-  box-shadow: 0 3px 12px rgba(230, 57, 70, 0.6);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);
   z-index: 2;
   transform-origin: center;
-  transition: transform 0.15s ease;
+  transition: transform 0.12s ease;
 }
 .em-marker:active .em-marker__icon {
   transform: scale(0.92);
 }
 
-/* (EmergenciesTab did not originally have a tail; keeping head-only pin.
-   If you want a tail here too, add a .em-marker__tail span in the
-   createMarker innerHTML and the CSS below.) */
+/* Tail — the tip sits on the coordinate thanks to anchor: 'bottom' */
+.em-marker__tail {
+  position: absolute;
+  top: 34px;
+  left: 50%;
+  margin-left: -8px;
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 18px solid var(--pin);
+  z-index: 0;
+  pointer-events: none;
+  filter: drop-shadow(0 3px 2px rgba(0, 0, 0, 0.35));
+}
 
+/* Non-active states — no pulse */
+.em-marker--resolved .em-marker__pulse,
+.em-marker--cancelled .em-marker__pulse,
+.em-marker--muted .em-marker__pulse {
+  animation: none;
+  display: none;
+}
+
+/* Selected — subtle enlargement + brighter ring */
 .em-marker--selected .em-marker__icon {
   transform: scale(1.15);
   border-width: 4px;
-  box-shadow: 0 4px 20px rgba(230, 57, 70, 0.9);
+  box-shadow: 0 4px 20px rgba(230, 57, 70, 0.9),
+              0 0 0 2px rgba(255, 255, 255, 0.4);
 }
 
-/* MapLibre controls */
+/* Focus ring for keyboard nav */
+.em-marker:focus-visible .em-marker__icon {
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.6),
+              0 4px 10px rgba(0, 0, 0, 0.4);
+}
+
+/* ============================================================
+   MapLibre controls — glass treatment
+   ============================================================ */
 .maplibregl-ctrl-group {
-  background: rgba(18, 28, 46, 0.92) !important;
-  backdrop-filter: blur(10px);
-  border: 1px solid #22304a !important;
+  background: rgba(10, 22, 40, 0.72) !important;
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
   border-radius: 12px !important;
   overflow: hidden;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
 }
 .maplibregl-ctrl-group button {
   background: transparent !important;
-  color: #eaf0fa !important;
+  color: var(--text) !important;
   width: 40px !important;
   height: 40px !important;
   min-width: 40px !important;
@@ -1190,7 +1437,10 @@ function statusLabel(s) {
   font-size: 20px !important;
 }
 .maplibregl-ctrl-group button + button {
-  border-top: 1px solid #22304a !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
 }
-.maplibregl-ctrl-bottom-right { bottom: 12px !important; right: 12px !important; }
+.maplibregl-ctrl-bottom-right {
+  bottom: 12px !important;
+  right: 12px !important;
+}
 </style>
