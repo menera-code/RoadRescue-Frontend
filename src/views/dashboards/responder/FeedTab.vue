@@ -5,6 +5,7 @@ import MediaGallery from '@/components/MediaGallery.vue'
 import {
   useIncidents,
   acceptIncident,
+  resolveIncident,
   INCIDENT_STATUS,
   STATUS_GROUPS,
   statusLabel,
@@ -13,7 +14,7 @@ import {
 const auth = useAuthStore()
 
 // ---------------------------------------------------------------------------
-// FILTER (internal tabs: New / Mine)
+// FILTER
 // ---------------------------------------------------------------------------
 const activeFilter = ref('new') // 'new' | 'mine'
 
@@ -67,9 +68,7 @@ function requestLocation() {
         lng: pos.coords.longitude,
       }
     },
-    () => {
-      locating.value = false
-    },
+    () => { locating.value = false },
     { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
   )
 }
@@ -77,7 +76,7 @@ function requestLocation() {
 onMounted(requestLocation)
 
 // ---------------------------------------------------------------------------
-// FORMATTING HELPERS
+// HELPERS
 // ---------------------------------------------------------------------------
 const TYPE_ICONS = {
   flat_tire:       '🛞',
@@ -88,6 +87,7 @@ const TYPE_ICONS = {
   major_collision: '💥',
   vehicle_fire:    '🔥',
   road_hazard:     '⚠️',
+  emergency:       '🚨',
 }
 
 const TYPE_LABELS = {
@@ -99,15 +99,11 @@ const TYPE_LABELS = {
   major_collision: 'Major Crash',
   vehicle_fire:    'Vehicle Fire',
   road_hazard:     'Road Hazard',
+  emergency:       'Emergency (SOS)',
 }
 
-function typeIcon(type) {
-  return TYPE_ICONS[type] || '❓'
-}
-
-function typeLabel(type) {
-  return TYPE_LABELS[type] || 'Incident'
-}
+function typeIcon(type) { return TYPE_ICONS[type] || '❓' }
+function typeLabel(type) { return TYPE_LABELS[type] || 'Incident' }
 
 function timeAgo(date) {
   if (!date) return ''
@@ -169,8 +165,38 @@ async function onAccept(incident) {
 }
 
 // ---------------------------------------------------------------------------
-// CLEANUP
+// RESOLVE FLOW  (Mark as Responded / Completed)
 // ---------------------------------------------------------------------------
+const resolvingId = ref(null)
+const resolveError = ref('')
+const justResolvedId = ref(null)
+
+async function onResolve(incident) {
+  if (resolvingId.value) return
+  if (!confirm(
+    'Mark this incident as responded and completed?\n\n' +
+    'The admin will see it as resolved in analytics.'
+  )) return
+
+  resolvingId.value = incident.id
+  resolveError.value = ''
+
+  try {
+    await resolveIncident(incident.id, {
+      uid: auth.user?.uid,
+      fullName: auth.profile?.fullName || '',
+    })
+    justResolvedId.value = incident.id
+    setTimeout(() => { justResolvedId.value = null }, 3000)
+  } catch (e) {
+    console.error('[FeedTab] resolve failed', e)
+    resolveError.value = 'Could not mark as responded. Try again.'
+    setTimeout(() => (resolveError.value = ''), 3000)
+  } finally {
+    resolvingId.value = null
+  }
+}
+
 onBeforeUnmount(() => {
   // composable handles its own cleanup
 })
@@ -219,8 +245,9 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <!-- Error banner -->
+    <!-- Error banners -->
     <p v-if="acceptError" class="error-banner">{{ acceptError }}</p>
+    <p v-else-if="resolveError" class="error-banner">{{ resolveError }}</p>
     <p v-else-if="hasError" class="error-banner">{{ hasError }}</p>
 
     <!-- Loading -->
@@ -256,7 +283,11 @@ onBeforeUnmount(() => {
         v-for="inc in activeList"
         :key="inc.id"
         class="card"
-        :class="{ 'card--mine': activeFilter === 'mine' }"
+        :class="{
+          'card--mine': activeFilter === 'mine',
+          'card--resolved': justResolvedId === inc.id,
+          'card--emergency': inc.type === 'emergency',
+        }"
       >
         <!-- Card head -->
         <div class="card-head">
@@ -265,6 +296,7 @@ onBeforeUnmount(() => {
               {{ typeIcon(inc.type) }}
             </span>
             <span class="card-type-label">{{ typeLabel(inc.type) }}</span>
+            <span v-if="inc.type === 'emergency'" class="card-type-sos">SOS</span>
           </div>
           <span class="card-time tiny">{{ timeAgo(inc.createdAt) }}</span>
         </div>
@@ -274,16 +306,19 @@ onBeforeUnmount(() => {
           {{ inc.description }}
         </p>
 
+        <!-- Emergency audio indicator -->
+        <div v-if="inc.type === 'emergency' && inc.audioUrl" class="card-audio-pill">
+          <span aria-hidden="true">🎤</span>
+          <span>Voice message</span>
+        </div>
+
         <!-- Meta row -->
         <div class="card-meta">
           <span v-if="inc.barangay" class="card-meta-item">
             <span aria-hidden="true">📍</span>
             {{ inc.barangay }}
           </span>
-          <span
-            v-if="formatDistance(distanceTo(inc))"
-            class="card-meta-item"
-          >
+          <span v-if="formatDistance(distanceTo(inc))" class="card-meta-item">
             <span aria-hidden="true">🚶</span>
             {{ formatDistance(distanceTo(inc)) }}
           </span>
@@ -303,14 +338,14 @@ onBeforeUnmount(() => {
           Reported by {{ inc.citizenName }}
         </p>
 
-        <!-- Status chip for "Mine" tab -->
+        <!-- Status chip (Mine tab) -->
         <div v-if="activeFilter === 'mine'" class="card-status">
           <span class="status-chip" :class="`status-chip--${inc.status}`">
             {{ statusLabel(inc.status) }}
           </span>
         </div>
 
-        <!-- Accept button -->
+        <!-- Accept button (New tab) -->
         <button
           v-if="activeFilter === 'new'"
           class="btn btn--accept"
@@ -318,6 +353,25 @@ onBeforeUnmount(() => {
           @click="onAccept(inc)"
         >
           {{ acceptingId === inc.id ? 'Accepting…' : 'Accept' }}
+        </button>
+
+        <!-- Resolve button (Mine tab) -->
+        <button
+          v-if="activeFilter === 'mine'"
+          class="btn btn--resolve"
+          :class="{ 'btn--resolve-done': justResolvedId === inc.id }"
+          :disabled="resolvingId === inc.id || justResolvedId === inc.id"
+          @click="onResolve(inc)"
+        >
+          <template v-if="justResolvedId === inc.id">
+            ✓ Marked as responded
+          </template>
+          <template v-else-if="resolvingId === inc.id">
+            Saving…
+          </template>
+          <template v-else>
+            ✓ Mark as Responded
+          </template>
         </button>
       </li>
     </ul>
@@ -345,21 +399,11 @@ onBeforeUnmount(() => {
   flex-direction: column;
 }
 
-/* ---------- Header ---------- */
-.head {
-  margin-bottom: 16px;
-}
+.head { margin-bottom: 16px; }
+.head .h1 { font-size: 1.5rem; }
+.head .muted { margin-top: 4px; line-height: 1.5; }
 
-.head .h1 {
-  font-size: 1.5rem;
-}
-
-.head .muted {
-  margin-top: 4px;
-  line-height: 1.5;
-}
-
-/* ---------- Filter row ---------- */
+/* Filter row */
 .filter-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -386,11 +430,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
   transition: all 0.15s ease;
 }
-
-.filter-btn:active {
-  transform: scale(0.97);
-}
-
+.filter-btn:active { transform: scale(0.97); }
 .filter-btn--on {
   background: var(--bg-elev);
   color: var(--text);
@@ -409,12 +449,9 @@ onBeforeUnmount(() => {
   font-size: 0.6875rem;
   font-weight: 700;
 }
+.filter-count--green { background: var(--accent); }
 
-.filter-count--green {
-  background: var(--accent);
-}
-
-/* ---------- Error banner ---------- */
+/* Error banner */
 .error-banner {
   background: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.3);
@@ -425,7 +462,7 @@ onBeforeUnmount(() => {
   margin-bottom: 14px;
 }
 
-/* ---------- States ---------- */
+/* States */
 .state-block {
   background: var(--bg-elev);
   border: 1px dashed var(--border);
@@ -444,12 +481,7 @@ onBeforeUnmount(() => {
   animation: spin 0.8s linear infinite;
   margin: 0 auto 12px;
 }
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 .state-icon {
   font-size: 2rem;
@@ -457,20 +489,18 @@ onBeforeUnmount(() => {
   margin-bottom: 10px;
   opacity: 0.8;
 }
-
 .state-title {
   font-size: 0.9375rem;
   font-weight: 650;
   margin-bottom: 4px;
 }
-
 .state-text {
   line-height: 1.5;
   max-width: 30ch;
   margin-inline: auto;
 }
 
-/* ---------- Incident list ---------- */
+/* List */
 .list {
   list-style: none;
   display: flex;
@@ -484,28 +514,31 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-lg);
   padding: 16px;
   animation: card-in 0.24s ease;
+  transition: all 0.2s ease;
 }
 
 .card--mine {
   border-color: rgba(47, 158, 115, 0.35);
   background:
-    radial-gradient(
-      90% 100% at 50% 0%,
-      var(--accent-soft) 0%,
-      transparent 70%
-    ),
+    radial-gradient(90% 100% at 50% 0%, var(--accent-soft) 0%, transparent 70%),
     var(--bg-elev);
 }
 
+.card--emergency {
+  border-color: rgba(230, 57, 70, 0.4);
+}
+
+.card--resolved {
+  border-color: rgba(47, 158, 115, 0.7);
+  background:
+    radial-gradient(90% 100% at 50% 0%, rgba(47, 158, 115, 0.18) 0%, transparent 70%),
+    var(--bg-elev);
+  box-shadow: 0 0 20px rgba(47, 158, 115, 0.3);
+}
+
 @keyframes card-in {
-  from {
-    transform: translateY(6px);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
+  from { transform: translateY(6px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
 }
 
 /* Card head */
@@ -516,30 +549,32 @@ onBeforeUnmount(() => {
   gap: 10px;
   margin-bottom: 10px;
 }
-
 .card-type {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
-
-.card-type-icon {
-  font-size: 1.25rem;
-  line-height: 1;
-}
-
+.card-type-icon { font-size: 1.25rem; line-height: 1; }
 .card-type-label {
   font-size: 1rem;
   font-weight: 700;
   color: var(--text);
   letter-spacing: -0.01em;
 }
-
-.card-time {
-  flex-shrink: 0;
-  white-space: nowrap;
+.card-type-sos {
+  font-size: 0.5625rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: #e63946;
+  color: #fff;
+  animation: sos-blink 1.2s ease-in-out infinite alternate;
 }
+@keyframes sos-blink { from { opacity: 1; } to { opacity: 0.6; } }
+
+.card-time { flex-shrink: 0; white-space: nowrap; }
 
 /* Description */
 .card-desc {
@@ -554,6 +589,21 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+/* Audio pill */
+.card-audio-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 99px;
+  background: rgba(230, 57, 70, 0.12);
+  border: 1px solid rgba(230, 57, 70, 0.3);
+  color: #e63946;
+  font-size: 0.75rem;
+  font-weight: 650;
+  margin-bottom: 10px;
+}
+
 /* Meta row */
 .card-meta {
   display: flex;
@@ -561,7 +611,6 @@ onBeforeUnmount(() => {
   gap: 10px;
   margin-bottom: 10px;
 }
-
 .card-meta-item {
   display: inline-flex;
   align-items: center;
@@ -570,21 +619,11 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
 }
 
-/* Media thumbnails */
-.card-media {
-  margin-bottom: 10px;
-}
-
-/* Citizen */
-.card-citizen {
-  margin-bottom: 12px;
-}
+.card-media { margin-bottom: 10px; }
+.card-citizen { margin-bottom: 12px; }
 
 /* Status chip */
-.card-status {
-  margin-bottom: 12px;
-}
-
+.card-status { margin-bottom: 12px; }
 .status-chip {
   display: inline-block;
   font-size: 0.6875rem;
@@ -594,40 +633,51 @@ onBeforeUnmount(() => {
   padding: 4px 10px;
   border-radius: 6px;
 }
-
-.status-chip--accepted {
-  color: #f59e0b;
-  background: rgba(245, 158, 11, 0.14);
-}
-
-.status-chip--en_route {
-  color: #3b82f6;
-  background: rgba(59, 130, 246, 0.14);
-}
-
-.status-chip--on_scene {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
+.status-chip--accepted { color: #f59e0b; background: rgba(245, 158, 11, 0.14); }
+.status-chip--en_route { color: #3b82f6; background: rgba(59, 130, 246, 0.14); }
+.status-chip--on_scene { color: var(--accent); background: var(--accent-soft); }
 
 /* Accept button */
 .btn--accept {
-  background: linear-gradient(
-    160deg,
-    #3cb886 0%,
-    var(--accent) 55%,
-    #267a58 100%
-  );
+  background: linear-gradient(160deg, #3cb886 0%, var(--accent) 55%, #267a58 100%);
   color: #fff;
   font-size: 0.9375rem;
   font-weight: 700;
   min-height: 46px;
   box-shadow: 0 4px 12px rgba(47, 158, 115, 0.35);
   margin-top: 4px;
+  width: 100%;
 }
+.btn--accept:active:not(:disabled) { transform: scale(0.97); }
 
-.btn--accept:active:not(:disabled) {
-  transform: scale(0.97);
+/* Resolve button */
+.btn--resolve {
+  background: linear-gradient(160deg, #4f8ff7 0%, #3b82f6 55%, #2563eb 100%);
+  color: #fff;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  min-height: 46px;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35);
+  margin-top: 4px;
+  width: 100%;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+.btn--resolve:active:not(:disabled) { transform: scale(0.97); }
+.btn--resolve:disabled { opacity: 0.7; cursor: not-allowed; }
+
+.btn--resolve-done {
+  background: linear-gradient(160deg, #3cb886 0%, #2f9e73 55%, #267a58 100%);
+  box-shadow: 0 4px 12px rgba(47, 158, 115, 0.5);
+  opacity: 1 !important;
+  cursor: default;
 }
 
 /* Location hint */
@@ -635,7 +685,6 @@ onBeforeUnmount(() => {
   text-align: center;
   padding: 16px 0 8px;
 }
-
 .link {
   background: none;
   border: none;
@@ -645,8 +694,5 @@ onBeforeUnmount(() => {
   font-size: inherit;
   cursor: pointer;
 }
-
-.link:disabled {
-  opacity: 0.6;
-}
+.link:disabled { opacity: 0.6; }
 </style>
