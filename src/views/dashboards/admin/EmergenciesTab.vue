@@ -71,10 +71,8 @@ function subscribe() {
 }
 
 // =========================================================================
-// DERIVED — groups
+// DERIVED
 // =========================================================================
-// Active = needs attention. Emergencies arrive as 'unverified' so they
-// also appear in the admin Verify queue.
 const activeEmergencies = computed(() =>
   incidents.value.filter((e) =>
     e.status === 'unverified' ||
@@ -93,7 +91,6 @@ const handledEmergencies = computed(() =>
   )
 )
 
-// Group tag for a given incident — used to color the marker.
 function markerGroup(status) {
   if (
     status === 'unverified' ||
@@ -113,13 +110,17 @@ function markerGroup(status) {
 // =========================================================================
 const mapContainer = ref(null)
 let map = null
-const markers = new Map() // id → maplibregl.Marker
+const markers = new Map()
 
 const selectedId = ref(null)
 const showDetail = ref(false)
 
 function initMap() {
-  if (!mapContainer.value) return
+  if (!mapContainer.value) {
+    console.warn('[EmergenciesTab] map container not in DOM yet')
+    return
+  }
+  if (map) return // already initialized
 
   map = new maplibregl.Map({
     container: mapContainer.value,
@@ -148,25 +149,11 @@ function initMap() {
   })
 }
 
-// -------------------------------------------------------------------------
-// Marker rendering — every incident, colored by its group.
-//
-// The pin element:
-//   • MUST have `position: absolute; top: 0; left: 0` — MapLibre only
-//     adds its own positioning class to elements IT creates, so we
-//     declare it ourselves.
-//   • MUST NOT have any transform of its own — MapLibre writes
-//     `transform: translate(x, y)` on this node and it must be the
-//     only transform on the tree.
-//   • Is 40×52 (head 40×40 + tail 12) and uses `anchor: 'bottom'` so
-//     the tail tip sits exactly on the coordinate.
-// -------------------------------------------------------------------------
 function renderMarkers() {
   if (!map) return
 
   const currentIds = new Set(incidents.value.map((i) => i.id))
 
-  // Remove stale markers
   for (const [id, m] of markers.entries()) {
     if (!currentIds.has(id)) {
       m.remove()
@@ -198,10 +185,8 @@ function renderMarkers() {
         `em-marker em-marker--${group}` + (isSelected ? ' em-marker--selected' : '')
       if (el.className !== wanted) el.className = wanted
     } else {
-      const el = createMarkerElement(group, inc.status, inc.type)
+      const el = createMarkerElement(group, inc.type)
 
-      // Capture the ID *string* only — avoids the stale-closure bug when
-      // Firestore pushes a fresh object.
       const id = inc.id
       el.addEventListener('click', (ev) => {
         ev.stopPropagation()
@@ -221,13 +206,12 @@ function renderMarkers() {
   }
 }
 
-function createMarkerElement(group, status, type) {
+function createMarkerElement(group, type) {
   const el = document.createElement('button')
   el.type = 'button'
   el.className = `em-marker em-marker--${group}`
   el.setAttribute('aria-label', 'Emergency incident')
 
-  // Icon picker — emergencies use 🚨, resolved use ✓, cancelled use ✕
   let icon = '🚨'
   if (group === 'resolved') icon = '✓'
   else if (group === 'cancelled') icon = '✕'
@@ -246,7 +230,7 @@ watch(incidents, () => {
 })
 
 // =========================================================================
-// MAP NAVIGATION
+// NAVIGATION
 // =========================================================================
 function flyTo(incident) {
   if (!map || !incident?.location) return
@@ -391,11 +375,10 @@ async function dismiss() {
 // =========================================================================
 // LIFECYCLE
 // =========================================================================
-onMounted(subscribe)
-
 onMounted(async () => {
   await nextTick()
   initMap()
+  subscribe()
 })
 
 onBeforeUnmount(() => {
@@ -467,6 +450,46 @@ function statusLabel(s) {
       </div>
     </header>
 
+    <!-- ============================================================
+         MAP — always rendered so initMap() has a container at mount.
+         ============================================================ -->
+    <div class="map-wrap">
+      <div ref="mapContainer" class="map-canvas" />
+
+      <div class="map-legend">
+        <div class="legend-item">
+          <span class="legend-dot legend-dot--active" />
+          <span>Active</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-dot legend-dot--resolved" />
+          <span>Resolved</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-dot legend-dot--cancelled" />
+          <span>Cancelled</span>
+        </div>
+      </div>
+
+      <button class="recenter-btn" aria-label="Fit to all" @click="recenterAll">
+        <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
+          <path
+            d="M3 9V5a2 2 0 0 1 2-2h4M15 3h4a2 2 0 0 1 2 2v4M21 15v4a2 2 0 0 1-2 2h-4M9 21H5a2 2 0 0 1-2-2v-4"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          />
+        </svg>
+      </button>
+
+      <div v-if="!loading && !incidents.length" class="map-empty">
+        <p class="tiny">No emergencies on the map.</p>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         BELOW-MAP STATE
+         ============================================================ -->
     <div v-if="loading" class="state-block">
       <div class="state-spinner" aria-hidden="true" />
       <p class="tiny">Loading emergencies…</p>
@@ -477,118 +500,69 @@ function statusLabel(s) {
     </div>
 
     <template v-else>
-      <!-- ============================================================
-           MAP — all incidents, color-coded
-           ============================================================ -->
-      <div class="map-wrap">
-        <div ref="mapContainer" class="map-canvas" />
-
-        <!-- Legend -->
-        <div class="map-legend">
-          <div class="legend-item">
-            <span class="legend-dot legend-dot--active" />
-            <span>Active</span>
-          </div>
-          <div class="legend-item">
-            <span class="legend-dot legend-dot--resolved" />
-            <span>Resolved</span>
-          </div>
-          <div class="legend-item">
-            <span class="legend-dot legend-dot--cancelled" />
-            <span>Cancelled</span>
-          </div>
-        </div>
-
-        <!-- Recenter -->
-        <button class="recenter-btn" aria-label="Fit to all" @click="recenterAll">
-          <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
-            <path
-              d="M3 9V5a2 2 0 0 1 2-2h4M15 3h4a2 2 0 0 1 2 2v4M21 15v4a2 2 0 0 1-2 2h-4M9 21H5a2 2 0 0 1-2-2v-4"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-            />
-          </svg>
-        </button>
-
-        <div v-if="!incidents.length" class="map-empty">
-          <p class="tiny">No emergencies on the map.</p>
-        </div>
-      </div>
-
-      <div v-if="!incidents.length" class="state-block" style="margin-top:16px">
-        <div class="state-icon" aria-hidden="true">✓</div>
-        <p class="state-title">No emergencies yet</p>
-        <p class="tiny state-text">
-          Anonymous SOS reports will appear here instantly.
-        </p>
-      </div>
-
-      <template v-else>
-        <section v-if="activeEmergencies.length" class="section">
-          <h2 class="section-title">
-            <span class="dot dot--red" /> Active
-          </h2>
-          <ul class="list">
-            <li
-              v-for="inc in activeEmergencies"
-              :key="inc.id"
-              class="card card--active"
-              :class="{ 'card--selected': inc.id === selectedId }"
-              @click="openDetail(inc)"
-            >
-              <div class="card-head">
-                <div class="card-title-wrap">
-                  <span class="sos-badge">SOS</span>
-                  <span class="card-title">Anonymous emergency</span>
-                </div>
-                <span class="card-time">{{ timeAgo(inc.createdAt) }}</span>
+      <section v-if="activeEmergencies.length" class="section">
+        <h2 class="section-title">
+          <span class="dot dot--red" /> Active
+        </h2>
+        <ul class="list">
+          <li
+            v-for="inc in activeEmergencies"
+            :key="inc.id"
+            class="card card--active"
+            :class="{ 'card--selected': inc.id === selectedId }"
+            @click="openDetail(inc)"
+          >
+            <div class="card-head">
+              <div class="card-title-wrap">
+                <span class="sos-badge">SOS</span>
+                <span class="card-title">Anonymous emergency</span>
               </div>
+              <span class="card-time">{{ timeAgo(inc.createdAt) }}</span>
+            </div>
 
-              <div v-if="inc.audioUrl" class="mini-audio">
-                <span aria-hidden="true">🎤</span>
-                <span class="tiny">Voice message attached</span>
-              </div>
+            <div v-if="inc.audioUrl" class="mini-audio">
+              <span aria-hidden="true">🎤</span>
+              <span class="tiny">Voice message attached</span>
+            </div>
 
-              <div class="card-summary">
-                <span class="chip">{{ inc.barangay || '—' }}</span>
-                <span class="chip chip--status">{{ statusLabel(inc.status) }}</span>
-                <span class="chip chip--mono">
-                  {{ inc.shortId || inc.id.slice(0, 6).toUpperCase() }}
-                </span>
-              </div>
-            </li>
-          </ul>
-        </section>
+            <div class="card-summary">
+              <span class="chip">{{ inc.barangay || '—' }}</span>
+              <span class="chip chip--status">{{ statusLabel(inc.status) }}</span>
+              <span class="chip chip--mono">
+                {{ inc.shortId || inc.id.slice(0, 6).toUpperCase() }}
+              </span>
+            </div>
+          </li>
+        </ul>
+      </section>
 
-        <section v-if="handledEmergencies.length" class="section">
-          <h2 class="section-title">
-            <span class="dot dot--green" /> Handled
-          </h2>
-          <ul class="list">
-            <li
-              v-for="inc in handledEmergencies"
-              :key="inc.id"
-              class="card card--handled"
-              @click="openDetail(inc)"
-            >
-              <div class="card-head">
-                <div class="card-title-wrap">
-                  <span class="ok-badge">✓</span>
-                  <span class="card-title">Anonymous emergency</span>
-                </div>
-                <span class="card-time">{{ formatDateTime(inc.createdAt) }}</span>
+      <section v-if="handledEmergencies.length" class="section">
+        <h2 class="section-title">
+          <span class="dot dot--green" /> Handled
+        </h2>
+        <ul class="list">
+          <li
+            v-for="inc in handledEmergencies"
+            :key="inc.id"
+            class="card card--handled"
+            @click="openDetail(inc)"
+          >
+            <div class="card-head">
+              <div class="card-title-wrap">
+                <span class="ok-badge">✓</span>
+                <span class="card-title">Anonymous emergency</span>
               </div>
-              <div class="card-summary">
-                <span class="chip">{{ inc.barangay || '—' }}</span>
-                <span class="chip chip--mono">
-                  {{ inc.shortId || inc.id.slice(0, 6).toUpperCase() }}
-                </span>
-              </div>
-            </li>
-          </ul>
-        </section>
-      </template>
+              <span class="card-time">{{ formatDateTime(inc.createdAt) }}</span>
+            </div>
+            <div class="card-summary">
+              <span class="chip">{{ inc.barangay || '—' }}</span>
+              <span class="chip chip--mono">
+                {{ inc.shortId || inc.id.slice(0, 6).toUpperCase() }}
+              </span>
+            </div>
+          </li>
+        </ul>
+      </section>
     </template>
 
     <!-- ============================================================
@@ -801,6 +775,7 @@ function statusLabel(s) {
   border: 1px solid var(--glass-border-strong);
   margin-bottom: 20px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  background: rgba(10, 22, 40, 0.5);
 }
 .map-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 
@@ -865,7 +840,7 @@ function statusLabel(s) {
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.35);
   backdrop-filter: blur(2px);
   pointer-events: none;
   z-index: 2;
@@ -896,7 +871,6 @@ function statusLabel(s) {
   to   { opacity: 0.4; transform: scale(0.8); }
 }
 
-/* ---------- Cards ---------- */
 .list { list-style: none; display: flex; flex-direction: column; gap: 10px; }
 
 .card {
@@ -1290,19 +1264,6 @@ function statusLabel(s) {
      GLOBAL STYLES (unscoped) — MapLibre DOM lives outside scoped
      ============================================================ -->
 <style>
-/* ============================================================
-   EMERGENCY MARKER — teardrop pin with anchor: 'bottom'.
-
-   Three rules that make this bulletproof:
-     1. `position: absolute; top: 0; left: 0` — MapLibre only adds
-        its positioning class to elements IT creates. Since we supply
-        the element, we declare positioning ourselves.
-     2. NO transform of our own on the outer element. MapLibre writes
-        `transform: translate(x, y)` on it and that must be the only
-        transform on the tree — nothing to desync from.
-     3. The pulse is a box-shadow animation (paint layer), never a
-        transform (compositor layer).
-   ============================================================ */
 .em-marker {
   position: absolute;
   top: 0;
@@ -1319,13 +1280,11 @@ function statusLabel(s) {
   outline: none;
 }
 
-/* Colour per state — set once, shared by icon + tail + pulse */
 .em-marker--active    { --pin: #e63946; --pin-dark: #b81f2b; }
 .em-marker--resolved  { --pin: #2f9e73; --pin-dark: #1e6b4d; }
 .em-marker--cancelled { --pin: #64748b; --pin-dark: #3f4c5e; }
 .em-marker--muted     { --pin: #64748b; --pin-dark: #3f4c5e; }
 
-/* Soft pulse ring — anchored to the head, only animates box-shadow */
 .em-marker__pulse {
   position: absolute;
   top: 0;
@@ -1352,7 +1311,6 @@ function statusLabel(s) {
   }
 }
 
-/* Circular head */
 .em-marker__icon {
   position: absolute;
   top: 0;
@@ -1377,7 +1335,6 @@ function statusLabel(s) {
   transform: scale(0.92);
 }
 
-/* Tail — the tip sits on the coordinate thanks to anchor: 'bottom' */
 .em-marker__tail {
   position: absolute;
   top: 34px;
@@ -1393,7 +1350,6 @@ function statusLabel(s) {
   filter: drop-shadow(0 3px 2px rgba(0, 0, 0, 0.35));
 }
 
-/* Non-active states — no pulse */
 .em-marker--resolved .em-marker__pulse,
 .em-marker--cancelled .em-marker__pulse,
 .em-marker--muted .em-marker__pulse {
@@ -1401,7 +1357,6 @@ function statusLabel(s) {
   display: none;
 }
 
-/* Selected — subtle enlargement + brighter ring */
 .em-marker--selected .em-marker__icon {
   transform: scale(1.15);
   border-width: 4px;
@@ -1409,15 +1364,11 @@ function statusLabel(s) {
               0 0 0 2px rgba(255, 255, 255, 0.4);
 }
 
-/* Focus ring for keyboard nav */
 .em-marker:focus-visible .em-marker__icon {
   box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.6),
               0 4px 10px rgba(0, 0, 0, 0.4);
 }
 
-/* ============================================================
-   MapLibre controls — glass treatment
-   ============================================================ */
 .maplibregl-ctrl-group {
   background: rgba(10, 22, 40, 0.72) !important;
   backdrop-filter: blur(16px) saturate(140%);
