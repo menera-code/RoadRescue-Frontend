@@ -224,10 +224,8 @@ function dropUserMarker(lng, lat) {
 
   const el = document.createElement('div')
   el.className = 'user-dot'
-  el.innerHTML = `
-    <span class="user-dot__pulse"></span>
-    <span class="user-dot__core"></span>
-  `
+  // Single child — no separate pulse span.
+  el.innerHTML = `<span class="user-dot__core"></span>`
 
   userMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
     .setLngLat([lng, lat])
@@ -1256,47 +1254,44 @@ const reportCount = computed(() => myReports.value.length)
 /* ============================================================
    USER LOCATION DOT
    Outer element must have NO transform / transition / filter —
-   MapLibre owns its positioning transform.
+   MapLibre owns its positioning transform. The pulse is a
+   box-shadow animation (paint layer) rather than a transform
+   animation (compositor layer), so it stays perfectly synced
+   with MapLibre's translate during zoom.
    ============================================================ */
 .user-dot {
   position: relative;
-  width: 26px;
-  height: 26px;
+  width: 14px;
+  height: 14px;
   pointer-events: none;
 }
 
 .user-dot__core {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 14px;
-  height: 14px;
-  margin: -7px 0 0 -7px;
+  inset: 0;
   border-radius: 50%;
   background: #2f9e73;
   border: 2.5px solid #fff;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
-  z-index: 2;
+  animation: user-pulse 2s ease-out infinite;
+  /* box-shadow only — no transform, no will-change, no filter */
 }
 
-.user-dot__pulse {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 26px;
-  height: 26px;
-  margin: -13px 0 0 -13px;
-  border-radius: 50%;
-  background: #2f9e73;
-  opacity: 0.5;
-  animation: pulse 1.8s ease-out infinite;
-  z-index: 1;
-  transform-origin: center;
-}
-
-@keyframes pulse {
-  0%   { transform: scale(0.6); opacity: 0.6; }
-  100% { transform: scale(2);   opacity: 0;   }
+@keyframes user-pulse {
+  0% {
+    box-shadow:
+      0 2px 6px rgba(0, 0, 0, 0.35),
+      0 0 0 0 rgba(47, 158, 115, 0.65);
+  }
+  70% {
+    box-shadow:
+      0 2px 6px rgba(0, 0, 0, 0.35),
+      0 0 0 18px rgba(47, 158, 115, 0);
+  }
+  100% {
+    box-shadow:
+      0 2px 6px rgba(0, 0, 0, 0.35),
+      0 0 0 18px rgba(47, 158, 115, 0);
+  }
 }
 
 /* ============================================================
