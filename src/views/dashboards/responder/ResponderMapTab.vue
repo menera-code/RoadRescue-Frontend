@@ -11,25 +11,22 @@ import {
   statusLabel,
 } from '@/composables/useIncidents'
 
-// NOTE: maplibre-gl v3+ bundles its own worker — no setWorkerUrl needed.
-// The old worker import was removed because the path no longer exists in
-// v3+, and the bad asset request was falling through to the SPA fallback
-// (returning index.html with MIME text/html), which killed the bundle.
-
 // =========================================================================
 // CONSTANTS
 // =========================================================================
 const CALAPAN_CENTER = [121.1803, 13.4108]
 const DEFAULT_ZOOM = 13
 
+// OSRM public demo server — free, worldwide, no key needed.
+// Docs: http://project-osrm.org/docs/v5.24.0/api/
+const OSRM_BASE = 'https://router.project-osrm.org/route/v1/driving'
+
 const SATELLITE_STYLE = {
   version: 8,
   sources: {
     satellite: {
       type: 'raster',
-      tiles: [
-        'https://mt0.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}',
-      ],
+      tiles: ['https://mt0.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}'],
       tileSize: 256,
     },
   },
@@ -73,54 +70,40 @@ const DEFAULT_STYLE_KEY = 'bright'
 // =========================================================================
 const auth = useAuthStore()
 
-// All pending incidents (unclaimed) — for the red markers
 const { incidents: pendingIncidents } = useIncidents({
   statuses: STATUS_GROUPS.OPEN,
   scope: 'all',
 })
 
-// My active incidents — for the green markers
 const { incidents: myIncidents } = useIncidents({
   statuses: STATUS_GROUPS.ACTIVE,
   scope: 'assignedToMe',
 })
 
-// Everything else accepted by others — for the amber markers
 const { incidents: otherActiveIncidents } = useIncidents({
   statuses: STATUS_GROUPS.ACTIVE,
   scope: 'all',
 })
 
-/**
- * Combined list of incidents to render on the map.
- * Priority: mine > pending > other-active
- * Deduplicated by incident id.
- */
 const mapIncidents = computed(() => {
   const seen = new Set()
   const out = []
 
-  // Mine first (highest priority for responder)
   for (const i of myIncidents.value) {
     if (seen.has(i.id)) continue
     seen.add(i.id)
     out.push({ ...i, _group: 'mine' })
   }
-
-  // Pending (unclaimed)
   for (const i of pendingIncidents.value) {
     if (seen.has(i.id)) continue
     seen.add(i.id)
     out.push({ ...i, _group: 'pending' })
   }
-
-  // Others' active (still useful context)
   for (const i of otherActiveIncidents.value) {
     if (seen.has(i.id)) continue
     seen.add(i.id)
     out.push({ ...i, _group: 'other' })
   }
-
   return out
 })
 
@@ -143,12 +126,19 @@ const selectedIncident = ref(null)
 const acceptingId = ref(null)
 const acceptError = ref('')
 
+// Routing state
+const routeGeojson = ref(null)
+const routeMeta = ref(null)      // { distance (m), duration (s) }
+const routeLoading = ref(false)
+const routeError = ref('')
+let routeAbortController = null
+
 const currentStyleKey = ref(
   localStorage.getItem(STORAGE_KEY) || DEFAULT_STYLE_KEY
 )
 
 let userMarker = null
-const incidentMarkers = new Map() // id → Marker
+const incidentMarkers = new Map()
 
 function currentStyleOption() {
   return (
@@ -156,6 +146,14 @@ function currentStyleOption() {
     STYLE_OPTIONS[0]
   )
 }
+
+// Which style the route should render as.
+//   'active'  → solid blue (I've accepted it)
+//   'preview' → dashed orange (I'm looking at a pending incident)
+const routeMode = computed(() => {
+  if (!selectedIncident.value) return null
+  return selectedIncident.value._group === 'mine' ? 'active' : 'preview'
+})
 
 // =========================================================================
 // INIT
@@ -168,6 +166,7 @@ onMounted(async () => {
     map.value.once('load', () => {
       requestUserLocation()
       renderIncidentMarkers()
+      addRouteLayers()
     })
   } else {
     requestUserLocation()
@@ -175,6 +174,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  if (routeAbortController) routeAbortController.abort()
   if (userMarker) {
     userMarker.remove()
     userMarker = null
@@ -244,7 +244,7 @@ function requestUserLocation() {
       locating.value = false
       locationError.value = 'Location unavailable.'
     },
-    { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
   )
 }
 
@@ -252,9 +252,17 @@ function dropUserMarker(lng, lat) {
   if (!map.value) return
   if (userMarker) userMarker.remove()
 
+  // ---------------------------------------------------------------------
+  // Single element, everything explicit.
+  // MapLibre only adds .maplibregl-marker to elements IT creates. Since
+  // we supply our own, we must declare position: absolute; top: 0;
+  // left: 0 ourselves, or the element falls into document flow and drifts
+  // on zoom. The pulse is a box-shadow animation (paint layer), never a
+  // transform (compositor layer) — so it can't desync from MapLibre's
+  // translate during pan/zoom.
+  // ---------------------------------------------------------------------
   const el = document.createElement('div')
-  el.className = 'user-dot'
-  el.innerHTML = `<span class="user-dot__core"></span>`
+  el.className = 'user-marker-dot'
 
   userMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
     .setLngLat([lng, lat])
@@ -269,7 +277,6 @@ function renderIncidentMarkers() {
 
   const currentIds = new Set(mapIncidents.value.map((i) => i.id))
 
-  // Remove markers for incidents no longer in the list
   for (const [id, marker] of incidentMarkers.entries()) {
     if (!currentIds.has(id)) {
       marker.remove()
@@ -277,7 +284,6 @@ function renderIncidentMarkers() {
     }
   }
 
-  // Add or update markers
   for (const inc of mapIncidents.value) {
     const loc = inc.location
     if (!loc) continue
@@ -299,12 +305,12 @@ function renderIncidentMarkers() {
     } else {
       const el = createIncidentMarkerElement(inc._group, inc.type)
       el.addEventListener('click', () => {
-        selectedIncident.value = inc
+        openDetail(inc)
       })
 
       marker = new maplibregl.Marker({
         element: el,
-        anchor: 'bottom',   // tip of the pin points at the coordinate
+        anchor: 'bottom',
       })
         .setLngLat([lng, lat])
         .addTo(map.value)
@@ -324,14 +330,14 @@ function createIncidentMarkerElement(group, type) {
   )
 
   const icons = {
-    flat_tire:       '🛞',
-    battery:         '🔋',
-    fuel:            '⛽',
+    flat_tire: '🛞',
+    battery: '🔋',
+    fuel: '⛽',
     stalled_vehicle: '🛑',
     minor_collision: '🚗',
     major_collision: '💥',
-    vehicle_fire:    '🔥',
-    road_hazard:     '⚠️',
+    vehicle_fire: '🔥',
+    road_hazard: '⚠️',
   }
   const icon = icons[type] || '❓'
 
@@ -343,10 +349,169 @@ function createIncidentMarkerElement(group, type) {
   return el
 }
 
-// Re-render markers when the incident list changes
 watch(mapIncidents, () => {
   if (map.value?.loaded()) renderIncidentMarkers()
 })
+
+// =========================================================================
+// ROUTE LAYERS (added after map loads)
+// =========================================================================
+function addRouteLayers() {
+  if (!map.value || map.value.getSource('route')) return
+
+  map.value.addSource('route', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] },
+  })
+
+  // ----- Accepted route: solid ocean-blue -----
+
+  // Halo (wider, darker, drawn first so it sits underneath)
+  map.value.addLayer({
+    id: 'route-halo-solid',
+    type: 'line',
+    source: 'route',
+    layout: {
+      'line-cap': 'round',
+      'line-join': 'round',
+      visibility: 'none',
+    },
+    paint: {
+      'line-color': 'rgba(10, 22, 40, 0.55)',
+      'line-width': 12,
+      'line-opacity': 0.9,
+    },
+  })
+
+  // Main line
+  map.value.addLayer({
+    id: 'route-line-solid',
+    type: 'line',
+    source: 'route',
+    layout: {
+      'line-cap': 'round',
+      'line-join': 'round',
+      visibility: 'none',
+    },
+    paint: {
+      'line-color': '#0ea5e9',
+      'line-width': 6,
+      'line-opacity': 1,
+    },
+  })
+
+  // ----- Preview route: dashed sunset-orange -----
+  map.value.addLayer({
+    id: 'route-line-preview',
+    type: 'line',
+    source: 'route',
+    layout: {
+      'line-cap': 'round',
+      'line-join': 'round',
+      visibility: 'none',
+    },
+    paint: {
+      'line-color': '#fb923c',
+      'line-width': 5,
+      'line-opacity': 0.9,
+      'line-dasharray': [2, 1.5],
+    },
+  })
+}
+
+function updateRouteLayerVisibility() {
+  if (!map.value) return
+  const hasRoute = !!routeGeojson.value
+  const isActive = routeMode.value === 'active'
+  const isPreview = routeMode.value === 'preview'
+
+  const solidVis = hasRoute && isActive ? 'visible' : 'none'
+  const previewVis = hasRoute && isPreview ? 'visible' : 'none'
+
+  if (map.value.getLayer('route-halo-solid')) {
+    map.value.setLayoutProperty('route-halo-solid', 'visibility', solidVis)
+  }
+  if (map.value.getLayer('route-line-solid')) {
+    map.value.setLayoutProperty('route-line-solid', 'visibility', solidVis)
+  }
+  if (map.value.getLayer('route-line-preview')) {
+    map.value.setLayoutProperty('route-line-preview', 'visibility', previewVis)
+  }
+}
+
+function drawRoute() {
+  if (!map.value) return
+  const src = map.value.getSource('route')
+  if (!src) return
+  src.setData(
+    routeGeojson.value || { type: 'FeatureCollection', features: [] }
+  )
+  updateRouteLayerVisibility()
+}
+
+watch(routeMode, () => updateRouteLayerVisibility())
+
+// =========================================================================
+// ROUTE FETCH
+// =========================================================================
+async function fetchRoute(fromLngLat, toLngLat) {
+  if (routeAbortController) routeAbortController.abort()
+  routeAbortController = new AbortController()
+
+  routeLoading.value = true
+  routeError.value = ''
+  routeMeta.value = null
+
+  // OSRM expects lon,lat order — NOT lat,lon
+  const [fromLng, fromLat] = fromLngLat
+  const [toLng, toLat] = toLngLat
+
+  const url =
+    `${OSRM_BASE}/${fromLng},${fromLat};${toLng},${toLat}` +
+    `?overview=full&geometries=geojson&steps=false&annotations=false`
+
+  try {
+    const res = await fetch(url, { signal: routeAbortController.signal })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
+    const data = await res.json()
+    if (!data.routes || !data.routes.length) throw new Error('No route found')
+
+    const route = data.routes[0]
+
+    routeGeojson.value = {
+      type: 'Feature',
+      geometry: route.geometry,
+      properties: {},
+    }
+    routeMeta.value = {
+      distance: route.distance,   // meters
+      duration: route.duration,   // seconds
+    }
+    drawRoute()
+  } catch (e) {
+    if (e.name === 'AbortError') return
+    console.error('[ResponderMapTab] route fetch failed', e)
+    routeError.value = 'Could not calculate route.'
+    routeGeojson.value = null
+    routeMeta.value = null
+    drawRoute()
+  } finally {
+    routeLoading.value = false
+  }
+}
+
+function clearRoute() {
+  if (routeAbortController) {
+    routeAbortController.abort()
+    routeAbortController = null
+  }
+  routeGeojson.value = null
+  routeMeta.value = null
+  routeError.value = ''
+  routeLoading.value = false
+  drawRoute()
+}
 
 // =========================================================================
 // ACTIONS
@@ -383,13 +548,16 @@ function changeStyle(key) {
   map.value.setStyle(option.style)
 
   map.value.once('styledata', () => {
+    // setStyle() wipes sources/layers — re-add everything we own.
     if (userPosition.value) {
       dropUserMarker(userPosition.value.lng, userPosition.value.lat)
     }
-    // Markers were removed by setStyle() — clear the map and re-add
     for (const m of incidentMarkers.values()) m.remove()
     incidentMarkers.clear()
     renderIncidentMarkers()
+
+    addRouteLayers()
+    drawRoute()
   })
 
   showStylePicker.value = false
@@ -398,6 +566,65 @@ function changeStyle(key) {
 function closeIncidentSheet() {
   selectedIncident.value = null
   acceptError.value = ''
+  clearRoute()
+}
+
+/**
+ * Fits the map so both the user and the incident are visible, with
+ * generous bottom padding so the bottom sheet doesn't cover them.
+ */
+function fitUserAndIncident(incident) {
+  if (!map.value || !incident?.location) return
+
+  const points = [
+    [incident.location.longitude, incident.location.latitude],
+  ]
+  if (userPosition.value) {
+    points.push([userPosition.value.lng, userPosition.value.lat])
+  }
+
+  if (points.length === 1) {
+    map.value.flyTo({
+      center: points[0],
+      zoom: 17,
+      duration: 700,
+      essential: true,
+    })
+    return
+  }
+
+  const bounds = new maplibregl.LngLatBounds()
+  points.forEach((p) => bounds.extend(p))
+
+  map.value.fitBounds(bounds, {
+    padding: {
+      top: 90,
+      bottom: 260,   // leave room for the sheet
+      left: 60,
+      right: 60,
+    },
+    duration: 800,
+    maxZoom: 16,
+  })
+}
+
+async function openDetail(incident) {
+  selectedIncident.value = incident
+  acceptError.value = ''
+  routeError.value = ''
+
+  fitUserAndIncident(incident)
+
+  if (userPosition.value && incident.location) {
+    await fetchRoute(
+      [userPosition.value.lng, userPosition.value.lat],
+      [incident.location.longitude, incident.location.latitude]
+    )
+  } else {
+    routeError.value = userPosition.value
+      ? ''
+      : 'Enable location to see the route.'
+  }
 }
 
 async function onAcceptFromSheet() {
@@ -411,7 +638,18 @@ async function onAcceptFromSheet() {
       uid: auth.user?.uid,
       fullName: auth.profile?.fullName || '',
     })
-    closeIncidentSheet()
+
+    // Optimistically flip the local reference so the sheet immediately
+    // reflects the new state (no need to wait for Firestore's echo).
+    selectedIncident.value = {
+      ...inc,
+      _group: 'mine',
+      status: 'accepted',
+    }
+
+    // Route should now render as solid blue (routeMode flips automatically
+    // because it's computed from selectedIncident).
+    updateRouteLayerVisibility()
   } catch (e) {
     console.error('[ResponderMapTab] accept failed', e)
     acceptError.value = 'Could not accept. Try again.'
@@ -420,18 +658,31 @@ async function onAcceptFromSheet() {
   }
 }
 
+/**
+ * Hands off to the OS for real turn-by-turn navigation.
+ */
+function openExternalNavigation() {
+  if (!selectedIncident.value?.location) return
+  const lat = selectedIncident.value.location.latitude
+  const lng = selectedIncident.value.location.longitude
+
+  // Try Google Maps universal link first — works on both platforms.
+  const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`
+  window.open(url, '_blank', 'noopener')
+}
+
 // =========================================================================
 // HELPERS
 // =========================================================================
 const TYPE_LABELS = {
-  flat_tire:       'Flat Tire',
-  battery:         'Dead Battery',
-  fuel:            'Out of Fuel',
+  flat_tire: 'Flat Tire',
+  battery: 'Dead Battery',
+  fuel: 'Out of Fuel',
   stalled_vehicle: 'Stalled Vehicle',
   minor_collision: 'Minor Crash',
   major_collision: 'Major Crash',
-  vehicle_fire:    'Vehicle Fire',
-  road_hazard:     'Road Hazard',
+  vehicle_fire: 'Vehicle Fire',
+  road_hazard: 'Road Hazard',
 }
 
 function typeLabel(t) {
@@ -468,6 +719,17 @@ function formatDistance(m) {
   if (m == null) return ''
   if (m < 1000) return `${Math.round(m)} m`
   return `${(m / 1000).toFixed(1)} km`
+}
+
+function formatDuration(seconds) {
+  if (seconds == null) return '—'
+  const mins = Math.round(seconds / 60)
+  if (mins < 1) return '<1 min'
+  if (mins < 60) return `${mins} min`
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  if (m === 0) return `${h} hr`
+  return `${h} hr ${m} min`
 }
 </script>
 
@@ -617,6 +879,40 @@ function formatDistance(m) {
           </header>
 
           <div class="sheet-body">
+            <!-- Route info card -->
+            <div v-if="routeLoading" class="route-card route-card--loading">
+              <div class="route-spinner" aria-hidden="true" />
+              <span class="tiny">Calculating fastest route…</span>
+            </div>
+
+            <div v-else-if="routeMeta" class="route-card">
+              <div class="route-stat">
+                <span class="route-stat-icon" aria-hidden="true">📏</span>
+                <div>
+                  <p class="route-stat-label">Distance</p>
+                  <p class="route-stat-value">
+                    {{ formatDistance(routeMeta.distance) }}
+                  </p>
+                </div>
+              </div>
+              <div class="route-stat">
+                <span class="route-stat-icon" aria-hidden="true">🕒</span>
+                <div>
+                  <p class="route-stat-label">Est. drive</p>
+                  <p class="route-stat-value">
+                    {{ formatDuration(routeMeta.duration) }}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <p
+              v-else-if="routeError"
+              class="route-error"
+            >
+              {{ routeError }}
+            </p>
+
             <p v-if="selectedIncident.description" class="sheet-desc">
               {{ selectedIncident.description }}
             </p>
@@ -626,10 +922,7 @@ function formatDistance(m) {
               <span class="sheet-value">{{ selectedIncident.barangay || '—' }}</span>
             </div>
 
-            <div
-              v-if="selectedIncident.citizenName"
-              class="sheet-row"
-            >
+            <div v-if="selectedIncident.citizenName" class="sheet-row">
               <span class="sheet-label">Reported by</span>
               <span class="sheet-value">{{ selectedIncident.citizenName }}</span>
             </div>
@@ -639,18 +932,18 @@ function formatDistance(m) {
               class="sheet-row"
             >
               <span class="sheet-label">Status</span>
-              <span class="sheet-value">{{ statusLabel(selectedIncident.status) }}</span>
+              <span class="sheet-value">
+                {{ statusLabel(selectedIncident.status) }}
+              </span>
             </div>
 
             <p v-if="acceptError" class="error-text">{{ acceptError }}</p>
           </div>
 
           <footer class="sheet-foot">
+            <!-- Pending → offer Accept -->
             <template v-if="selectedIncident._group === 'pending'">
-              <button
-                class="btn btn--ghost"
-                @click="closeIncidentSheet"
-              >
+              <button class="btn btn--ghost" @click="closeIncidentSheet">
                 Close
               </button>
               <button
@@ -665,9 +958,18 @@ function formatDistance(m) {
                 }}
               </button>
             </template>
+
+            <!-- Mine → offer Navigate -->
             <template v-else>
-              <button class="btn btn--primary" @click="closeIncidentSheet">
+              <button class="btn btn--ghost" @click="closeIncidentSheet">
                 Close
+              </button>
+              <button
+                v-if="selectedIncident.location"
+                class="btn btn--primary"
+                @click="openExternalNavigation"
+              >
+                🧭 Navigate
               </button>
             </template>
           </footer>
@@ -729,6 +1031,7 @@ function formatDistance(m) {
             © <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>
             · © <a href="https://www.openmaptiles.org" target="_blank" rel="noopener">OpenMapTiles</a>
             · Data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>
+            · Routing by <a href="http://project-osrm.org/" target="_blank" rel="noopener">OSRM</a>
           </p>
           <button class="btn btn--primary" @click="showAttrib = false">Close</button>
         </div>
@@ -801,9 +1104,10 @@ function formatDistance(m) {
   width: 44px;
   height: 44px;
   border-radius: 12px;
-  background: rgba(18, 28, 46, 0.92);
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--border);
+  background: rgba(10, 22, 40, 0.72);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--glass-border-strong);
   color: var(--text);
   display: grid;
   place-items: center;
@@ -813,16 +1117,17 @@ function formatDistance(m) {
 }
 
 .ctrl-btn:active { transform: scale(0.92); }
-.ctrl-btn--active { color: var(--accent); border-color: var(--accent); }
+.ctrl-btn--active { color: var(--primary-light); border-color: var(--primary-light); }
 
 /* ---------- Legend ---------- */
 .legend {
   position: absolute;
   top: calc(env(safe-area-inset-top, 0px) + 12px);
   left: 12px;
-  background: rgba(18, 28, 46, 0.92);
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--border);
+  background: rgba(10, 22, 40, 0.72);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--glass-border-strong);
   border-radius: 12px;
   padding: 8px 12px;
   display: flex;
@@ -860,8 +1165,9 @@ function formatDistance(m) {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: rgba(18, 28, 46, 0.85);
-  backdrop-filter: blur(8px);
+  background: rgba(10, 22, 40, 0.72);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border: none;
   color: var(--text-muted);
   font-size: 12px;
@@ -892,10 +1198,16 @@ function formatDistance(m) {
 
 .sheet {
   position: relative;
-  background: var(--bg-elev);
+  background: linear-gradient(
+    180deg,
+    rgba(20, 41, 67, 0.98) 0%,
+    rgba(10, 22, 40, 0.98) 100%
+  );
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
   border-top-left-radius: 22px;
   border-top-right-radius: 22px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--glass-border-strong);
   border-bottom: none;
   max-height: 80dvh;
   display: flex;
@@ -912,7 +1224,7 @@ function formatDistance(m) {
 .sheet-grabber {
   width: 40px;
   height: 4px;
-  background: var(--border);
+  background: rgba(255, 255, 255, 0.14);
   border-radius: 99px;
   margin: 8px auto 4px;
 }
@@ -923,15 +1235,15 @@ function formatDistance(m) {
   align-items: flex-start;
   gap: 12px;
   padding: 8px 20px 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--glass-border);
 }
 
 .sheet-close {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: var(--bg-input);
-  border: none;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--glass-border);
   display: grid;
   place-items: center;
   color: var(--text-muted);
@@ -943,6 +1255,78 @@ function formatDistance(m) {
   flex: 1;
   overflow-y: auto;
   padding: 16px 20px;
+}
+
+/* ---------- Route card ---------- */
+.route-card {
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 16px;
+  background: linear-gradient(
+    135deg,
+    rgba(14, 165, 233, 0.14) 0%,
+    rgba(251, 146, 60, 0.08) 100%
+  );
+  border: 1px solid rgba(14, 165, 233, 0.28);
+  border-radius: var(--radius);
+}
+
+.route-card--loading {
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  padding: 16px;
+}
+
+.route-spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-top-color: var(--accent-light);
+  animation: spin 0.7s linear infinite;
+  margin-right: 8px;
+}
+
+.route-stat {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.route-stat-icon {
+  font-size: 1.125rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.route-stat-label {
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.route-stat-value {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.route-error {
+  font-size: 0.8125rem;
+  color: var(--text-dim);
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  text-align: center;
 }
 
 .sheet-desc {
@@ -957,7 +1341,7 @@ function formatDistance(m) {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--glass-border);
 }
 
 .sheet-label {
@@ -975,17 +1359,22 @@ function formatDistance(m) {
   display: flex;
   gap: 10px;
   padding: 14px 20px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--glass-border);
 }
 
 .sheet-foot .btn { flex: 1; }
 .sheet-foot .btn--ghost { flex: 0.6; }
 
 .btn--accept {
-  background: linear-gradient(160deg, #3cb886 0%, var(--accent) 55%, #267a58 100%);
+  background: linear-gradient(
+    135deg,
+    #38bdf8 0%,
+    #0ea5e9 55%,
+    #0284c7 100%
+  );
   color: #fff;
   font-weight: 700;
-  box-shadow: 0 4px 12px rgba(47, 158, 115, 0.4);
+  box-shadow: 0 4px 14px rgba(14, 165, 233, 0.4);
 }
 
 /* ---------- Style picker ---------- */
@@ -1003,8 +1392,14 @@ function formatDistance(m) {
 
 .picker-card {
   width: 240px;
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
+  background: linear-gradient(
+    160deg,
+    rgba(20, 41, 67, 0.96) 0%,
+    rgba(10, 22, 40, 0.96) 100%
+  );
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid var(--glass-border-strong);
   border-radius: var(--radius);
   padding: 12px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
@@ -1035,8 +1430,8 @@ function formatDistance(m) {
 }
 
 .style-option--on {
-  background: var(--bg-input);
-  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--glass-border-strong);
 }
 
 .style-preview {
@@ -1044,14 +1439,14 @@ function formatDistance(m) {
   height: 40px;
   border-radius: 8px;
   flex-shrink: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--glass-border);
 }
 
 .style-body { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 
 .style-label { font-size: 0.875rem; font-weight: 650; }
 
-.style-check { color: var(--accent); flex-shrink: 0; }
+.style-check { color: var(--accent-light); flex-shrink: 0; }
 
 /* ---------- Attribution ---------- */
 .attrib-overlay {
@@ -1068,8 +1463,14 @@ function formatDistance(m) {
 .attrib-card {
   width: 100%;
   max-width: 440px;
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
+  background: linear-gradient(
+    160deg,
+    rgba(20, 41, 67, 0.96) 0%,
+    rgba(10, 22, 40, 0.96) 100%
+  );
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid var(--glass-border-strong);
   border-radius: var(--radius-lg);
   padding: 20px;
   text-align: center;
@@ -1092,7 +1493,7 @@ function formatDistance(m) {
   margin-bottom: 16px;
 }
 
-.attrib-text a { color: var(--primary); text-decoration: underline; }
+.attrib-text a { color: var(--primary-light); text-decoration: underline; }
 
 /* ---------- Fade ---------- */
 .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
@@ -1104,49 +1505,54 @@ function formatDistance(m) {
      ============================================================ -->
 <style>
 /* ============================================================
-   USER LOCATION DOT — box-shadow pulse (no transform)
+   USER LOCATION MARKER — single element, everything explicit.
+   See MapTab.vue for the full explanation; this is the same
+   pattern.
    ============================================================ */
-.user-dot {
-  position: relative;
-  width: 14px;
-  height: 14px;
+.user-marker-dot {
+  position: absolute;
+  top: 0;
+  left: 0;
+
+  width: 20px;
+  height: 20px;
+  box-sizing: border-box;
+  margin: -10px 0 0 -10px;   /* centers the 20×20 on (0, 0) */
+
+  border-radius: 50%;
+  background: #2f9e73;
+  border: 3px solid #ffffff;
+
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.35),
+    0 0 0 0 rgba(47, 158, 115, 0.65);
+
+  animation: user-marker-pulse 2.4s ease-out infinite;
+
   pointer-events: none;
 }
 
-.user-dot__core {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: #2f9e73;
-  border: 2.5px solid #fff;
-  animation: user-pulse 2s ease-out infinite;
-}
-
-@keyframes user-pulse {
+@keyframes user-marker-pulse {
   0% {
     box-shadow:
       0 2px 6px rgba(0, 0, 0, 0.35),
       0 0 0 0 rgba(47, 158, 115, 0.65);
   }
-  70% {
-    box-shadow:
-      0 2px 6px rgba(0, 0, 0, 0.35),
-      0 0 0 18px rgba(47, 158, 115, 0);
-  }
+  70%,
   100% {
     box-shadow:
       0 2px 6px rgba(0, 0, 0, 0.35),
-      0 0 0 18px rgba(47, 158, 115, 0);
+      0 0 0 22px rgba(47, 158, 115, 0);
   }
 }
 
 /* ============================================================
-   INCIDENT MARKERS — teardrop pins
-   Outer element stays transform-free so MapLibre's positioning
-   transform is never fought by a CSS transition.
+   INCIDENT MARKERS — teardrop pins.
    ============================================================ */
 .incident-marker {
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 40px;
   height: 52px;
   padding: 0;
@@ -1159,12 +1565,10 @@ function formatDistance(m) {
   outline: none;
 }
 
-/* Colour per group — set once, used by head + tail + pulse */
 .incident-marker--pending { --pin: #e63946; }
 .incident-marker--mine    { --pin: #2f9e73; }
 .incident-marker--other   { --pin: #f59e0b; }
 
-/* Soft pulse — anchored to head, not tail */
 .incident-marker__pulse {
   position: absolute;
   top: 0;
@@ -1187,7 +1591,6 @@ function formatDistance(m) {
   100% { transform: scale(1.8); opacity: 0;    }
 }
 
-/* Circular head */
 .incident-marker__icon {
   position: absolute;
   top: 0;
@@ -1212,7 +1615,6 @@ function formatDistance(m) {
   transform: scale(0.92);
 }
 
-/* Tail — tip points at the coordinate */
 .incident-marker__tail {
   position: absolute;
   top: 34px;
@@ -1228,27 +1630,25 @@ function formatDistance(m) {
   filter: drop-shadow(0 3px 2px rgba(0, 0, 0, 0.3));
 }
 
-/* Other responders' incidents — no pulse */
 .incident-marker--other .incident-marker__pulse {
   display: none;
 }
 
-/* Mine — faster pulse (higher priority) */
 .incident-marker--mine .incident-marker__pulse {
   animation-duration: 1.4s;
 }
 
-/* Focus ring */
 .incident-marker:focus-visible .incident-marker__icon {
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.6),
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.6),
               0 4px 10px rgba(0, 0, 0, 0.4);
 }
 
-/* MapLibre controls */
+/* MapLibre controls — glass treatment to match the new theme */
 .maplibregl-ctrl-group {
-  background: rgba(18, 28, 46, 0.92) !important;
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--border) !important;
+  background: rgba(10, 22, 40, 0.72) !important;
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
   border-radius: 12px !important;
   overflow: hidden;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
@@ -1265,7 +1665,7 @@ function formatDistance(m) {
 }
 
 .maplibregl-ctrl-group button + button {
-  border-top: 1px solid var(--border) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
 }
 
 .maplibregl-ctrl-bottom-right {
