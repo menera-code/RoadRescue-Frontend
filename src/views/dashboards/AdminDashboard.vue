@@ -10,6 +10,7 @@ import VerifyTab from './admin/VerifyTab.vue'
 import AnalyticsTab from './admin/AnalyticsTab.vue'
 import InsightsTab from './admin/InsightsTab.vue'
 import UsersTab from './admin/UsersTab.vue'
+import SystemLogsTab from './admin/SystemLogsTab.vue'
 import AdminProfileTab from './admin/AdminProfileTab.vue'
 import EmergenciesTab from './admin/EmergenciesTab.vue'
 
@@ -51,6 +52,7 @@ const isAdmin = computed(() => auth.profile?.role === 'admin')
         <VerifyTab v-else-if="activeTab === 'verify'" />
         <InsightsTab v-else-if="activeTab === 'insights'" />
         <UsersTab v-else-if="activeTab === 'users'" />
+        <SystemLogsTab v-else-if="activeTab === 'logs'" />
         <AdminProfileTab v-else-if="activeTab === 'profile'" />
       </div>
     </main>
