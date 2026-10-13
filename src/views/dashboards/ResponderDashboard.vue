@@ -38,16 +38,13 @@ const isVerified = computed(() => auth.profile?.status === 'active')
 // DEEP LINK — acknowledgment from SMS
 // ---------------------------------------------------------------------------
 const ackNotice = ref('')
-const ackTone = ref('success') // 'success' | 'error' | 'info'
+const ackTone = ref('success')
 
 onMounted(async () => {
   const ref6 = route.query.ack
-
   if (!ref6 || typeof ref6 !== 'string') return
 
-  // Session should already be restored by the router guard, but double-check
   if (!auth.user) {
-    // Save intent, redirect to login
     router.replace({
       name: 'login',
       query: { redirect: `/dashboard?ack=${ref6}` },
@@ -62,7 +59,6 @@ async function handleAck(ref6) {
   const ref = ref6.toUpperCase()
 
   try {
-    // Find the incident whose ID starts with the ref
     const incidentId = await findIncidentIdByRef(ref)
 
     if (!incidentId) {
@@ -85,40 +81,60 @@ async function handleAck(ref6) {
     ackTone.value = 'error'
     ackNotice.value = 'Could not acknowledge. Try opening the incident manually.'
   } finally {
-    // Clean URL so a page refresh doesn't re-trigger
     router.replace({ path: '/dashboard' })
-
-    // Auto-dismiss the notice
     setTimeout(() => (ackNotice.value = ''), 6000)
   }
 }
 
 /**
- * Find an incident ID by its 6-char short ref.
- * Only considers incidents assigned to the current responder.
+ * Find an incident by its 6-char short ref.
+ * Checks BOTH the new multi-responder array AND the legacy single field.
  */
 async function findIncidentIdByRef(ref6) {
   if (!auth.user?.uid) return null
+  const uid = auth.user.uid
+  const seenIds = new Set()
 
-  // Query incidents assigned to this responder
-  const q = query(
-    collection(db, 'incidents'),
-    where('assignedResponderUid', '==', auth.user.uid)
-  )
-  const snap = await getDocs(q)
-
-  for (const docSnap of snap.docs) {
-    if (docSnap.id.slice(0, 6).toUpperCase() === ref6) {
-      return docSnap.id
+  // 1) New multi-responder model — array-contains
+  try {
+    const q = query(
+      collection(db, 'incidents'),
+      where('assignedResponderUids', 'array-contains', uid)
+    )
+    const snap = await getDocs(q)
+    for (const docSnap of snap.docs) {
+      seenIds.add(docSnap.id)
+      if (docSnap.id.slice(0, 6).toUpperCase() === ref6) {
+        return docSnap.id
+      }
     }
+  } catch (e) {
+    console.warn('[ResponderDashboard] array query failed', e)
   }
+
+  // 2) Legacy single-responder model
+  try {
+    const q = query(
+      collection(db, 'incidents'),
+      where('assignedResponderUid', '==', uid)
+    )
+    const snap = await getDocs(q)
+    for (const docSnap of snap.docs) {
+      if (seenIds.has(docSnap.id)) continue
+      if (docSnap.id.slice(0, 6).toUpperCase() === ref6) {
+        return docSnap.id
+      }
+    }
+  } catch (e) {
+    console.warn('[ResponderDashboard] legacy query failed', e)
+  }
+
   return null
 }
 </script>
 
 <template>
   <div class="responder-shell">
-    <!-- Deep-link acknowledgment banner -->
     <Transition name="fade">
       <div
         v-if="ackNotice"
@@ -132,7 +148,6 @@ async function findIncidentIdByRef(ref6) {
       </div>
     </Transition>
 
-    <!-- Verification banner -->
     <div v-if="!isVerified" class="verify-banner">
       <div class="verify-icon" aria-hidden="true">⏳</div>
       <div class="verify-body">
@@ -164,7 +179,6 @@ async function findIncidentIdByRef(ref6) {
   background: var(--bg);
 }
 
-/* ---------- Ack banner ---------- */
 .ack-banner {
   display: flex;
   align-items: center;
@@ -183,37 +197,27 @@ async function findIncidentIdByRef(ref6) {
   background: var(--accent-soft);
   border-bottom-color: rgba(47, 158, 115, 0.35);
 }
-.ack-banner--success .ack-text {
-  color: var(--accent);
-}
+.ack-banner--success .ack-text { color: var(--accent); }
 
 .ack-banner--info {
   background: rgba(59, 130, 246, 0.12);
   border-bottom-color: rgba(59, 130, 246, 0.35);
 }
-.ack-banner--info .ack-text {
-  color: #3b82f6;
-}
+.ack-banner--info .ack-text { color: #3b82f6; }
 
 .ack-banner--error {
   background: rgba(239, 68, 68, 0.12);
   border-bottom-color: rgba(239, 68, 68, 0.35);
 }
-.ack-banner--error .ack-text {
-  color: #ef4444;
-}
+.ack-banner--error .ack-text { color: #ef4444; }
 
-.ack-icon {
-  font-size: 1.125rem;
-  flex-shrink: 0;
-}
+.ack-icon { font-size: 1.125rem; flex-shrink: 0; }
 .ack-text {
   font-size: 0.875rem;
   font-weight: 650;
   line-height: 1.4;
 }
 
-/* ---------- Verify banner ---------- */
 .verify-banner {
   display: flex;
   gap: 12px;

@@ -4,11 +4,11 @@ import {
   collection,
   query,
   where,
-  orderBy,
   onSnapshot,
   doc,
   updateDoc,
   getDoc,
+  setDoc,
   serverTimestamp,
 } from 'firebase/firestore'
 import { db } from '@/firebase'
@@ -29,11 +29,34 @@ function slugify(name) {
 }
 
 // =========================================================================
+// NORMALIZER — supports both new (array) and legacy (single) schemas
+// =========================================================================
+function respondersFromDoc(d) {
+  if (Array.isArray(d.responders) && d.responders.length) {
+    return d.responders.filter(
+      (r) => r && typeof r === 'object' && r.uid
+    )
+  }
+  // Legacy migration: single responder stored on flat fields
+  if (d.responderUid) {
+    return [
+      {
+        uid: d.responderUid,
+        name: d.responderName || '',
+        phone: d.responderPhone || '',
+        agency: '',
+        assignedAt: d.assignedAt || null,
+      },
+    ]
+  }
+  return []
+}
+
+// =========================================================================
 // STATE — barangays
 // =========================================================================
-const barangayDocs = ref({})        // Map<slug, { responderUid, name, phone, ... }>
+const barangayDocs = ref({})
 const loadingBarangays = ref(true)
-
 let unsubBarangays = null
 
 function subscribeBarangays() {
@@ -60,11 +83,9 @@ function subscribeBarangays() {
 // =========================================================================
 const responders = ref([])
 const loadingResponders = ref(true)
-
 let unsubResponders = null
 
 function subscribeResponders() {
-  // Only active responders who can be assigned
   const q = query(
     collection(db, 'users'),
     where('role', '==', 'responder'),
@@ -97,7 +118,7 @@ function subscribeResponders() {
 }
 
 // =========================================================================
-// MERGED VIEW — combine static list with Firestore assignments
+// MERGED VIEW
 // =========================================================================
 const mergedBarangays = computed(() => {
   return BARANGAY_NAMES.map((name) => {
@@ -106,19 +127,25 @@ const mergedBarangays = computed(() => {
     return {
       name,
       slug,
-      responderUid: doc.responderUid || null,
-      responderName: doc.responderName || null,
-      responderPhone: doc.responderPhone || null,
-      assignedAt: doc.assignedAt || null,
+      responders: respondersFromDoc(doc),
     }
   })
 })
 
-const assignedCount = computed(
-  () => mergedBarangays.value.filter((b) => b.responderUid).length
-)
-
-const totalCount = computed(() => mergedBarangays.value.length)
+const stats = computed(() => {
+  let withResponder = 0
+  let totalResponders = 0
+  for (const b of mergedBarangays.value) {
+    if (b.responders.length) withResponder++
+    totalResponders += b.responders.length
+  }
+  return {
+    withResponder,
+    unassigned: mergedBarangays.value.length - withResponder,
+    total: mergedBarangays.value.length,
+    totalResponders,
+  }
+})
 
 // =========================================================================
 // SEARCH + FILTER
@@ -130,9 +157,9 @@ const visibleBarangays = computed(() => {
   let list = mergedBarangays.value
 
   if (filterMode.value === 'unassigned') {
-    list = list.filter((b) => !b.responderUid)
+    list = list.filter((b) => !b.responders.length)
   } else if (filterMode.value === 'assigned') {
-    list = list.filter((b) => b.responderUid)
+    list = list.filter((b) => b.responders.length > 0)
   }
 
   const q = searchQuery.value.trim().toLowerCase()
@@ -140,7 +167,9 @@ const visibleBarangays = computed(() => {
     list = list.filter(
       (b) =>
         b.name.toLowerCase().includes(q) ||
-        (b.responderName || '').toLowerCase().includes(q)
+        b.responders.some((r) =>
+          (r.name || '').toLowerCase().includes(q)
+        )
     )
   }
 
@@ -148,63 +177,97 @@ const visibleBarangays = computed(() => {
 })
 
 // =========================================================================
-// ASSIGN FLOW
+// ADD RESPONDER MODAL
 // =========================================================================
-const showAssignModal = ref(false)
-const selectedBarangay = ref(null)   // { name, slug, responderUid, ... }
+const showAddModal = ref(false)
+const selectedBarangay = ref(null)
 const responderQuery = ref('')
-const assigning = ref(false)
+const saving = ref(false)
 const actionError = ref('')
 
-const filteredResponders = computed(() => {
-  const q = responderQuery.value.trim().toLowerCase()
-  if (!q) return responders.value
-  return responders.value.filter(
-    (r) =>
-      r.fullName.toLowerCase().includes(q) ||
-      r.phone.toLowerCase().includes(q) ||
-      r.agency.toLowerCase().includes(q)
-  )
+// UIDs already in the currently-selected barangay
+const alreadyAssignedUids = computed(() => {
+  if (!selectedBarangay.value) return new Set()
+  return new Set(selectedBarangay.value.responders.map((r) => r.uid))
 })
 
-function openAssign(barangay) {
+// Filters responders by search query, and marks already-assigned ones
+const filteredResponders = computed(() => {
+  const q = responderQuery.value.trim().toLowerCase()
+  const base = responders.value
+
+  const filtered = !q
+    ? base
+    : base.filter(
+        (r) =>
+          r.fullName.toLowerCase().includes(q) ||
+          r.phone.toLowerCase().includes(q) ||
+          r.agency.toLowerCase().includes(q)
+      )
+
+  return filtered.map((r) => ({
+    ...r,
+    alreadyIn: alreadyAssignedUids.value.has(r.uid),
+  }))
+})
+
+function openAddModal(barangay) {
   selectedBarangay.value = barangay
   responderQuery.value = ''
   actionError.value = ''
-  showAssignModal.value = true
+  showAddModal.value = true
 }
 
-function closeAssign() {
-  showAssignModal.value = false
+function closeAddModal() {
+  showAddModal.value = false
   selectedBarangay.value = null
   responderQuery.value = ''
 }
 
-async function assignResponder(responder) {
-  if (!selectedBarangay.value || assigning.value) return
+async function addResponder(responder) {
+  if (!selectedBarangay.value || saving.value) return
+  if (alreadyAssignedUids.value.has(responder.uid)) return
 
-  assigning.value = true
+  saving.value = true
   actionError.value = ''
 
   try {
-    // 1. Update the barangay doc
     const bRef = doc(db, 'barangays', selectedBarangay.value.slug)
     const bSnap = await getDoc(bRef)
 
+    const current = bSnap.exists()
+      ? respondersFromDoc(bSnap.data())
+      : []
+
+    if (current.some((r) => r.uid === responder.uid)) {
+      actionError.value = 'Already assigned to this barangay.'
+      return
+    }
+
+    const entry = {
+      uid: responder.uid,
+      name: responder.fullName || '',
+      phone: responder.phone || '',
+      agency: responder.agency || '',
+      assignedAt: new Date().toISOString(),
+      assignedBy: auth.user?.uid || null,
+    }
+
+    const nextResponders = [...current, entry]
+
     const payload = {
-      responderUid: responder.uid,
-      responderName: responder.fullName,
-      responderPhone: responder.phone,
-      assignedAt: serverTimestamp(),
-      assignedBy: auth.user?.uid,
+      responders: nextResponders,
       updatedAt: serverTimestamp(),
+      // Clear legacy single-responder fields so they don't shadow the array
+      responderUid: null,
+      responderName: null,
+      responderPhone: null,
+      assignedAt: null,
     }
 
     if (bSnap.exists()) {
       await updateDoc(bRef, payload)
     } else {
-      // Shouldn't happen (we seeded them), but be safe
-      const { setDoc } = await import('firebase/firestore')
       await setDoc(bRef, {
         name: selectedBarangay.value.name,
         slug: selectedBarangay.value.slug,
@@ -212,59 +275,40 @@ async function assignResponder(responder) {
       })
     }
 
-    // 2. Optionally mirror onto the responder's user doc
-    try {
-      const uRef = doc(db, 'users', responder.uid)
-      await updateDoc(uRef, {
-        assignedBarangay: selectedBarangay.value.name,
-        updatedAt: serverTimestamp(),
-      })
-    } catch (e) {
-      // Non-fatal — the assignment above is what matters
-      console.warn('[BarangaysTab] could not update user doc', e)
+    // Update the local view immediately (optimistic)
+    selectedBarangay.value = {
+      ...selectedBarangay.value,
+      responders: nextResponders,
     }
-
-    closeAssign()
   } catch (e) {
-    console.error('[BarangaysTab] assign failed', e)
+    console.error('[BarangaysTab] add responder failed', e)
     actionError.value = 'Could not assign. Try again.'
   } finally {
-    assigning.value = false
+    saving.value = false
   }
 }
 
 // =========================================================================
-// CLEAR ASSIGNMENT
+// REMOVE RESPONDER
 // =========================================================================
-async function clearAssignment(barangay) {
-  if (!barangay.responderUid) return
-  if (!confirm(
-    `Remove ${barangay.responderName} from ${barangay.name}?`
-  )) return
+async function removeResponder(barangay, responder) {
+  if (!confirm(`Remove ${responder.name || responder.uid} from ${barangay.name}?`)) {
+    return
+  }
 
   try {
     const bRef = doc(db, 'barangays', barangay.slug)
+    const nextResponders = barangay.responders.filter(
+      (r) => r.uid !== responder.uid
+    )
+
     await updateDoc(bRef, {
-      responderUid: null,
-      responderName: null,
-      responderPhone: null,
-      assignedAt: null,
+      responders: nextResponders,
       updatedAt: serverTimestamp(),
     })
-
-    // Clear the mirror on the responder's user doc
-    try {
-      const uRef = doc(db, 'users', barangay.responderUid)
-      await updateDoc(uRef, {
-        assignedBarangay: null,
-        updatedAt: serverTimestamp(),
-      })
-    } catch (e) {
-      console.warn('[BarangaysTab] could not clear user doc', e)
-    }
   } catch (e) {
-    console.error('[BarangaysTab] clear failed', e)
-    alert('Could not clear assignment. Try again.')
+    console.error('[BarangaysTab] remove responder failed', e)
+    alert('Could not remove responder. Try again.')
   }
 }
 
@@ -284,31 +328,36 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="barangays-tab">
-    <!-- Header -->
     <header class="head">
       <h1 class="h1">Barangays</h1>
       <p class="muted">
-        Assign one responder per barangay. Dispatched incidents route to them.
+        Assign one or more responders per barangay. Dispatch sends an SMS
+        to every responder — first to accept wins.
       </p>
     </header>
 
-    <!-- Summary card -->
+    <!-- Summary -->
     <div class="summary-card">
       <div class="summary-stat">
-        <p class="summary-value">{{ assignedCount }}</p>
-        <p class="tiny summary-label">Assigned</p>
+        <p class="summary-value">{{ stats.withResponder }}</p>
+        <p class="tiny summary-label">Covered</p>
       </div>
       <div class="summary-divider" />
       <div class="summary-stat">
         <p class="summary-value summary-value--warn">
-          {{ totalCount - assignedCount }}
+          {{ stats.unassigned }}
         </p>
-        <p class="tiny summary-label">Unassigned</p>
+        <p class="tiny summary-label">Uncovered</p>
       </div>
       <div class="summary-divider" />
       <div class="summary-stat">
-        <p class="summary-value">{{ totalCount }}</p>
-        <p class="tiny summary-label">Total</p>
+        <p class="summary-value">{{ stats.totalResponders }}</p>
+        <p class="tiny summary-label">Responders</p>
+      </div>
+      <div class="summary-divider" />
+      <div class="summary-stat">
+        <p class="summary-value">{{ stats.total }}</p>
+        <p class="tiny summary-label">Barangays</p>
       </div>
     </div>
 
@@ -317,8 +366,8 @@ onBeforeUnmount(() => {
       <button
         v-for="f in [
           { key: 'all', label: 'All' },
-          { key: 'unassigned', label: 'Unassigned' },
-          { key: 'assigned', label: 'Assigned' },
+          { key: 'unassigned', label: 'Uncovered' },
+          { key: 'assigned', label: 'Covered' },
         ]"
         :key="f.key"
         type="button"
@@ -363,9 +412,7 @@ onBeforeUnmount(() => {
     <div v-else-if="!visibleBarangays.length" class="state-block">
       <div class="state-icon" aria-hidden="true">🔍</div>
       <p class="state-title">No matches</p>
-      <p class="tiny state-text">
-        Try a different search or filter.
-      </p>
+      <p class="tiny state-text">Try a different search or filter.</p>
     </div>
 
     <!-- List -->
@@ -374,87 +421,111 @@ onBeforeUnmount(() => {
         v-for="b in visibleBarangays"
         :key="b.slug"
         class="barangay-card"
-        :class="{ 'barangay-card--assigned': b.responderUid }"
+        :class="{ 'barangay-card--assigned': b.responders.length > 0 }"
       >
         <div class="barangay-head">
           <span class="barangay-name">{{ b.name }}</span>
           <span
             class="barangay-status"
-            :class="b.responderUid ? 'barangay-status--ok' : 'barangay-status--warn'"
+            :class="
+              b.responders.length
+                ? 'barangay-status--ok'
+                : 'barangay-status--warn'
+            "
           >
-            {{ b.responderUid ? 'Assigned' : 'Unassigned' }}
+            {{
+              b.responders.length
+                ? `${b.responders.length} assigned`
+                : 'Unassigned'
+            }}
           </span>
         </div>
 
-        <!-- Assigned -->
-        <div v-if="b.responderUid" class="barangay-body">
-          <div class="responder-row">
-            <span class="responder-icon" aria-hidden="true">👤</span>
-            <div class="responder-info">
-              <p class="responder-name">{{ b.responderName }}</p>
-              <p class="tiny">{{ b.responderPhone || 'No phone on file' }}</p>
-            </div>
-          </div>
-          <div class="barangay-actions">
-            <button
-              type="button"
-              class="btn btn--mini btn--mini-ghost"
-              @click="openAssign(b)"
-            >
-              Change
-            </button>
-            <button
-              type="button"
-              class="btn btn--mini btn--mini-danger"
-              @click="clearAssignment(b)"
-            >
-              Clear
-            </button>
-          </div>
-        </div>
-
-        <!-- Unassigned -->
-        <div v-else class="barangay-body">
-          <p class="tiny barangay-warning">
-            No responder yet — incidents here can't be dispatched.
-          </p>
-          <button
-            type="button"
-            class="btn btn--mini btn--mini-primary"
-            @click="openAssign(b)"
+        <!-- Responder list -->
+        <ul v-if="b.responders.length" class="responder-list">
+          <li
+            v-for="r in b.responders"
+            :key="r.uid"
+            class="responder-row"
           >
-            Assign responder
-          </button>
-        </div>
+            <span class="responder-avatar" aria-hidden="true">
+              {{ (r.name || '?').charAt(0).toUpperCase() }}
+            </span>
+            <div class="responder-info">
+              <p class="responder-name">{{ r.name || 'Unnamed responder' }}</p>
+              <p class="tiny responder-meta">
+                {{ r.phone || 'No phone' }}
+                <template v-if="r.agency"> · {{ r.agency }}</template>
+              </p>
+            </div>
+            <button
+              type="button"
+              class="responder-remove"
+              :aria-label="`Remove ${r.name}`"
+              @click="removeResponder(b, r)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M6 6l12 12M18 6L6 18"
+                  stroke="currentColor"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </button>
+          </li>
+        </ul>
+
+        <p v-else class="tiny barangay-warning">
+          No responder yet — incidents here can't be dispatched.
+        </p>
+
+        <button
+          type="button"
+          class="btn-add"
+          :disabled="loadingResponders"
+          @click="openAddModal(b)"
+        >
+          <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
+            <path
+              d="M12 5v14M5 12h14"
+              stroke="currentColor"
+              stroke-width="2.4"
+              stroke-linecap="round"
+            />
+          </svg>
+          {{ b.responders.length ? 'Add another responder' : 'Add responder' }}
+        </button>
       </li>
     </ul>
 
     <!-- ============================================================
-         ASSIGN MODAL
+         ADD RESPONDER MODAL
          ============================================================ -->
     <Teleport to="body">
       <Transition name="fade">
         <div
-          v-if="showAssignModal"
+          v-if="showAddModal"
           class="modal-root"
-          @click.self="closeAssign"
+          @click.self="closeAddModal"
         >
-          <div class="modal-backdrop" @click="closeAssign" />
+          <div class="modal-backdrop" @click="closeAddModal" />
 
           <div class="modal-sheet">
             <div class="modal-grabber" />
 
             <header class="modal-head">
               <div>
-                <h2 class="h2">Assign responder</h2>
+                <h2 class="h2">Add responder</h2>
                 <p class="tiny">
-                  For <strong>{{ selectedBarangay?.name }}</strong>
+                  To <strong>{{ selectedBarangay?.name }}</strong> ·
+                  {{ alreadyAssignedUids.size }} already assigned
                 </p>
               </div>
               <button
                 class="modal-close"
                 aria-label="Close"
-                @click="closeAssign"
+                @click="closeAddModal"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                   <path
@@ -468,7 +539,6 @@ onBeforeUnmount(() => {
             </header>
 
             <div class="modal-body">
-              <!-- Search -->
               <input
                 v-model="responderQuery"
                 type="text"
@@ -482,7 +552,7 @@ onBeforeUnmount(() => {
                 <span class="tiny">Loading responders…</span>
               </div>
 
-              <!-- No responders -->
+              <!-- No responders at all -->
               <div v-else-if="!responders.length" class="modal-state">
                 <p class="tiny modal-state-text">
                   No active responders exist yet. Create one first.
@@ -500,33 +570,37 @@ onBeforeUnmount(() => {
               </div>
 
               <!-- Responder list -->
-              <ul v-else class="responder-list">
+              <ul v-else class="responder-picker">
                 <li
                   v-for="r in filteredResponders"
                   :key="r.uid"
-                  class="responder-item"
-                  :class="{
-                    'responder-item--current':
-                      r.uid === selectedBarangay?.responderUid,
-                  }"
-                  @click="assignResponder(r)"
+                  class="responder-pick"
+                  :class="{ 'responder-pick--done': r.alreadyIn }"
+                  @click="!r.alreadyIn && addResponder(r)"
                 >
-                  <span class="responder-avatar" aria-hidden="true">
+                  <span class="picker-avatar" aria-hidden="true">
                     {{ (r.fullName || '?').charAt(0).toUpperCase() }}
                   </span>
-                  <div class="responder-item-body">
-                    <p class="responder-item-name">{{ r.fullName }}</p>
+                  <div class="picker-body">
+                    <p class="picker-name">{{ r.fullName || 'Unnamed' }}</p>
                     <p class="tiny">
                       {{ r.phone || 'No phone' }}
                       <template v-if="r.agency"> · {{ r.agency }}</template>
                     </p>
                   </div>
                   <span
-                    v-if="r.uid === selectedBarangay?.responderUid"
-                    class="responder-item-check"
-                    aria-label="Currently assigned"
+                    v-if="r.alreadyIn"
+                    class="picker-check"
+                    aria-label="Already assigned"
                   >
                     ✓
+                  </span>
+                  <span
+                    v-else
+                    class="picker-add"
+                    aria-hidden="true"
+                  >
+                    +
                   </span>
                 </li>
               </ul>
@@ -549,39 +623,39 @@ onBeforeUnmount(() => {
   min-height: 100%;
 }
 
-/* Header */
 .head { margin-bottom: 16px; }
 .head .h1 { font-size: 1.5rem; }
 .head .muted { margin-top: 4px; line-height: 1.5; }
 
-/* Summary card */
+/* Summary */
 .summary-card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 18px;
+  gap: 8px;
+  padding: 14px 12px;
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   margin-bottom: 14px;
 }
-.summary-stat { flex: 1; text-align: center; }
+.summary-stat { flex: 1; text-align: center; min-width: 0; }
 .summary-value {
-  font-size: 1.5rem;
+  font-size: 1.375rem;
   font-weight: 800;
   color: var(--text);
   line-height: 1;
   margin-bottom: 4px;
 }
 .summary-value--warn { color: #f59e0b; }
-.summary-label { line-height: 1.2; }
+.summary-label { line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .summary-divider {
   width: 1px;
   height: 32px;
   background: var(--border);
+  flex-shrink: 0;
 }
 
-/* Filter chips */
+/* Chips */
 .chips {
   display: flex;
   gap: 6px;
@@ -629,6 +703,7 @@ onBeforeUnmount(() => {
   color: var(--text);
   outline: none;
   transition: border-color 0.15s ease;
+  font-family: inherit;
 }
 .search-input:focus { border-color: #3b82f6; }
 
@@ -665,7 +740,7 @@ onBeforeUnmount(() => {
   list-style: none;
   display: grid;
   grid-template-columns: 1fr;
-  gap: 10px;
+  gap: 12px;
   padding-bottom: 20px;
 }
 
@@ -676,6 +751,7 @@ onBeforeUnmount(() => {
   padding: 14px 16px;
   display: flex;
   flex-direction: column;
+  gap: 12px;
 }
 .barangay-card--assigned {
   border-color: rgba(47, 158, 115, 0.3);
@@ -688,7 +764,6 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 10px;
 }
 .barangay-name {
   font-size: 0.9375rem;
@@ -704,47 +779,85 @@ onBeforeUnmount(() => {
   letter-spacing: 0.05em;
   padding: 4px 8px;
   border-radius: 6px;
+  white-space: nowrap;
 }
 .barangay-status--ok { color: var(--accent); background: var(--accent-soft); }
 .barangay-status--warn { color: #f59e0b; background: rgba(245, 158, 11, 0.14); }
 
-.barangay-body {
+.responder-list {
+  list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  flex: 1;
-  justify-content: flex-end;
+  gap: 6px;
 }
-.responder-row { display: flex; align-items: center; gap: 10px; }
-.responder-icon { font-size: 1.125rem; flex-shrink: 0; }
+.responder-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg-input);
+  border-radius: 10px;
+}
+.responder-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(160deg, #3cb886 0%, #2f9e73 55%, #267a58 100%);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 0.8125rem;
+  flex-shrink: 0;
+}
 .responder-info { flex: 1; min-width: 0; }
 .responder-name {
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   font-weight: 650;
   margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.barangay-warning { color: #f59e0b; line-height: 1.4; }
-.barangay-actions { display: flex; gap: 8px; }
+.responder-meta { line-height: 1.3; }
+.responder-remove {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.14);
+  border: none;
+  color: var(--danger);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+.responder-remove:active { transform: scale(0.9); }
 
-/* Mini buttons */
-.btn--mini {
-  min-height: 36px;
-  padding: 8px 14px;
+.barangay-warning { color: #f59e0b; line-height: 1.4; }
+
+.btn-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 14px;
   border-radius: 10px;
+  background: #3b82f6;
+  color: #fff;
   font-size: 0.8125rem;
   font-weight: 650;
   border: none;
   cursor: pointer;
-  transition: all 0.15s ease;
-  width: auto;
+  align-self: stretch;
   font-family: inherit;
+  transition: all 0.15s ease;
 }
-.btn--mini:active { transform: scale(0.96); }
-.btn--mini-primary { background: #3b82f6; color: #fff; align-self: flex-start; }
-.btn--mini-ghost { background: var(--bg-input); color: var(--text); border: 1px solid var(--border); }
-.btn--mini-danger { background: rgba(239, 68, 68, 0.14); color: var(--danger); }
+.btn-add:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-add:active:not(:disabled) { transform: scale(0.97); }
 
-/* MODAL */
+/* Modal */
 .modal-root {
   position: fixed;
   inset: 0;
@@ -820,14 +933,14 @@ onBeforeUnmount(() => {
   line-height: 1.5;
   max-width: 28ch;
 }
-.responder-list {
+.responder-picker {
   list-style: none;
   display: flex;
   flex-direction: column;
   gap: 6px;
   margin-top: 14px;
 }
-.responder-item {
+.responder-pick {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -838,12 +951,12 @@ onBeforeUnmount(() => {
   cursor: pointer;
   transition: all 0.15s ease;
 }
-.responder-item:active { transform: scale(0.98); }
-.responder-item--current {
-  background: rgba(59, 130, 246, 0.12);
-  border-color: rgba(59, 130, 246, 0.4);
+.responder-pick:active:not(.responder-pick--done) { transform: scale(0.98); }
+.responder-pick--done {
+  opacity: 0.55;
+  cursor: default;
 }
-.responder-avatar {
+.picker-avatar {
   width: 36px;
   height: 36px;
   border-radius: 50%;
@@ -855,26 +968,32 @@ onBeforeUnmount(() => {
   font-size: 0.9375rem;
   flex-shrink: 0;
 }
-.responder-item-body { flex: 1; min-width: 0; }
-.responder-item-name {
+.picker-body { flex: 1; min-width: 0; }
+.picker-name {
   font-size: 0.9375rem;
   font-weight: 650;
   margin-bottom: 2px;
 }
-.responder-item-check {
-  color: #3b82f6;
+.picker-check {
+  color: var(--accent);
   font-size: 1.25rem;
   font-weight: 700;
   flex-shrink: 0;
 }
+.picker-add {
+  color: #3b82f6;
+  font-size: 1.5rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
 .action-error { margin-top: 12px; text-align: center; }
 
 .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 
-/* ============================================================
-   RESPONSIVE
-   ============================================================ */
+/* Responsive */
 @media (min-width: 640px) {
   .head .h1 { font-size: 1.75rem; }
   .list { grid-template-columns: repeat(2, 1fr); gap: 14px; }
@@ -901,7 +1020,7 @@ onBeforeUnmount(() => {
   .head .h1 { font-size: 2rem; }
   .head .muted { font-size: 1rem; }
   .list { grid-template-columns: repeat(3, 1fr); gap: 16px; }
-  .summary-card { max-width: 620px; }
+  .summary-card { max-width: 720px; }
 }
 
 @media (min-width: 1440px) {

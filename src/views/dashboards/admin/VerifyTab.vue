@@ -78,25 +78,44 @@ const detailBarangayOpen = ref(false)
 const barangayOverride = ref(false)
 const filteredBarangays = computed(() => searchBarangays(detailBarangayQuery.value))
 
-const assignedResponder = ref(null)
+// ---------- NEW: list of assigned responders ----------
+const assignedResponders = ref([])
 const assignedLoading = ref(false)
 
-async function loadAssignedResponder(barangayName) {
-  if (!barangayName) { assignedResponder.value = null; return }
+function respondersFromDoc(d) {
+  if (Array.isArray(d.responders) && d.responders.length) {
+    return d.responders.filter((r) => r && r.uid)
+  }
+  if (d.responderUid) {
+    return [{
+      uid: d.responderUid,
+      name: d.responderName || '',
+      phone: d.responderPhone || '',
+    }]
+  }
+  return []
+}
+
+async function loadAssignedResponders(barangayName) {
+  if (!barangayName) {
+    assignedResponders.value = []
+    return
+  }
   assignedLoading.value = true
   try {
     const slug = slugify(barangayName)
     const snap = await getDoc(doc(db, 'barangays', slug))
     if (snap.exists()) {
-      const data = snap.data()
-      assignedResponder.value = data.responderUid
-        ? { uid: data.responderUid, name: data.responderName || '', phone: data.responderPhone || '' }
-        : null
-    } else assignedResponder.value = null
+      assignedResponders.value = respondersFromDoc(snap.data())
+    } else {
+      assignedResponders.value = []
+    }
   } catch (e) {
-    console.error('[VerifyTab] failed to load assigned responder', e)
-    assignedResponder.value = null
-  } finally { assignedLoading.value = false }
+    console.error('[VerifyTab] failed to load assigned responders', e)
+    assignedResponders.value = []
+  } finally {
+    assignedLoading.value = false
+  }
 }
 
 function slugify(name) {
@@ -110,14 +129,14 @@ function openDetail(incident) {
   detailBarangayOpen.value = false
   barangayOverride.value = false
   viewMode.value = 'detail'
-  loadAssignedResponder(detailBarangay.value)
+  loadAssignedResponders(detailBarangay.value)
   window.scrollTo({ top: 0, behavior: 'instant' })
 }
 
 function closeDetail() {
   viewMode.value = 'list'
   selectedIncident.value = null
-  assignedResponder.value = null
+  assignedResponders.value = []
 }
 
 function pickBarangay(name) {
@@ -125,7 +144,7 @@ function pickBarangay(name) {
   detailBarangayOpen.value = false
   detailBarangayQuery.value = ''
   barangayOverride.value = true
-  loadAssignedResponder(name)
+  loadAssignedResponders(name)
 }
 
 const dispatching = ref(false)
@@ -133,8 +152,10 @@ const rejecting = ref(false)
 const actionError = ref('')
 
 const canDispatch = computed(() =>
-  !!detailBarangay.value && !!assignedResponder.value &&
-  !dispatching.value && !rejecting.value
+  !!detailBarangay.value &&
+  assignedResponders.value.length > 0 &&
+  !dispatching.value &&
+  !rejecting.value
 )
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
@@ -164,7 +185,9 @@ async function onDispatch() {
   } catch (e) {
     console.error('[VerifyTab] dispatch failed', e)
     actionError.value = 'Could not reach server. Try again.'
-  } finally { dispatching.value = false }
+  } finally {
+    dispatching.value = false
+  }
 }
 
 async function onReject() {
@@ -184,7 +207,9 @@ async function onReject() {
   } catch (e) {
     console.error('[VerifyTab] reject failed', e)
     actionError.value = 'Could not reject. Try again.'
-  } finally { rejecting.value = false }
+  } finally {
+    rejecting.value = false
+  }
 }
 </script>
 
@@ -326,7 +351,6 @@ async function onReject() {
       <div v-if="selectedIncident" class="detail-layout">
         <!-- LEFT: media -->
         <div class="detail-col detail-col--media">
-          <!-- Emergency audio (if any) -->
           <div v-if="isEmergency && selectedIncident.audioUrl" class="emergency-audio-card">
             <div class="emergency-audio-head">
               <span class="emergency-audio-icon" aria-hidden="true">🚨</span>
@@ -454,21 +478,35 @@ async function onReject() {
             </div>
 
             <div class="responder-preview">
-              <p class="detail-section-title">Assigned responder</p>
+              <p class="detail-section-title">
+                Assigned responders
+                <span v-if="assignedResponders.length" class="tiny">
+                  ({{ assignedResponders.length }})
+                </span>
+              </p>
 
               <div v-if="assignedLoading" class="responder-loading">
                 <div class="state-spinner state-spinner--sm" />
-                <span class="tiny">Checking assignment…</span>
+                <span class="tiny">Checking assignments…</span>
               </div>
 
-              <div v-else-if="assignedResponder" class="responder-assigned">
-                <span class="responder-icon" aria-hidden="true">👤</span>
-                <div class="responder-body">
-                  <p class="responder-name">{{ assignedResponder.name }}</p>
-                  <p class="tiny">{{ assignedResponder.phone || 'No phone on file' }}</p>
-                </div>
-                <span class="responder-ok" aria-label="Assigned">✓</span>
-              </div>
+              <ul
+                v-else-if="assignedResponders.length"
+                class="responder-assigned-list"
+              >
+                <li
+                  v-for="r in assignedResponders"
+                  :key="r.uid"
+                  class="responder-assigned"
+                >
+                  <span class="responder-icon" aria-hidden="true">👤</span>
+                  <div class="responder-body">
+                    <p class="responder-name">{{ r.name || 'Unnamed' }}</p>
+                    <p class="tiny">{{ r.phone || 'No phone on file' }}</p>
+                  </div>
+                  <span class="responder-ok" aria-label="Assigned">✓</span>
+                </li>
+              </ul>
 
               <div v-else class="responder-missing">
                 <span class="responder-icon" aria-hidden="true">⚠️</span>
@@ -477,6 +515,14 @@ async function onReject() {
                   <p class="tiny">Assign one in the Barangays tab before dispatching.</p>
                 </div>
               </div>
+
+              <p
+                v-if="assignedResponders.length > 1"
+                class="tiny multi-note"
+              >
+                📣 All {{ assignedResponders.length }} responders will receive an
+                SMS. First to accept wins.
+              </p>
             </div>
           </div>
 
@@ -488,9 +534,13 @@ async function onReject() {
             </button>
             <button class="btn btn--primary detail-dispatch" :disabled="!canDispatch" @click="onDispatch">
               {{
-                dispatching ? 'Dispatching…'
-                  : assignedResponder ? 'Verify & Dispatch'
-                  : 'No Responder Assigned'
+                dispatching
+                  ? 'Dispatching…'
+                  : assignedResponders.length > 1
+                    ? `Verify & Dispatch to ${assignedResponders.length}`
+                    : assignedResponders.length === 1
+                      ? 'Verify & Dispatch'
+                      : 'No Responders Assigned'
               }}
             </button>
           </div>
@@ -575,7 +625,6 @@ async function onReject() {
   border-radius: var(--radius);
   color: var(--text);
   outline: none;
-  transition: border-color 0.15s ease;
 }
 .search-input:focus { border-color: #3b82f6; }
 
@@ -878,11 +927,19 @@ async function onReject() {
 
 .responder-preview { padding-top: 14px; border-top: 1px solid var(--border); }
 .responder-loading { display: flex; align-items: center; gap: 8px; }
+
+.responder-assigned-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .responder-assigned, .responder-missing {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-radius: var(--radius);
 }
 .responder-assigned {
@@ -893,14 +950,23 @@ async function onReject() {
   background: rgba(245, 158, 11, 0.1);
   border: 1px solid rgba(245, 158, 11, 0.3);
 }
-.responder-icon { font-size: 1.25rem; flex-shrink: 0; }
+.responder-icon { font-size: 1.125rem; flex-shrink: 0; }
 .responder-body { flex: 1; min-width: 0; }
-.responder-name { font-size: 0.9375rem; font-weight: 700; margin-bottom: 2px; }
+.responder-name { font-size: 0.875rem; font-weight: 700; margin-bottom: 2px; }
 .responder-ok {
   color: var(--accent);
-  font-size: 1.5rem;
+  font-size: 1.25rem;
   font-weight: 700;
   line-height: 1;
+}
+
+.multi-note {
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: rgba(59, 130, 246, 0.08);
+  border-radius: 8px;
+  color: #3b82f6;
+  line-height: 1.4;
 }
 
 .error-banner {
