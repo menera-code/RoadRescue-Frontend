@@ -11,7 +11,15 @@ import {
   updateEmail as fbUpdateEmail,
   updatePassword as fbUpdatePassword,
 } from 'firebase/auth'
-import { doc, setDoc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore'
+import {
+  doc,
+  setDoc,
+  getDoc,
+  updateDoc,
+  serverTimestamp,
+  collection,
+  addDoc,
+} from 'firebase/firestore'
 import { auth, db } from '@/firebase'
 
 export const ROLES = Object.freeze({
@@ -67,6 +75,36 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /**
+   * Write an auth event to the system_logs audit trail.
+   * Never throws — logging must not break sign-in/out flows.
+   */
+  async function writeAuthLog({
+    level = 'info',
+    action,
+    message,
+    uid = null,
+    email = null,
+    name = null,
+    role = null,
+  }) {
+    try {
+      await addDoc(collection(db, 'system_logs'), {
+        timestamp: serverTimestamp(),
+        level,
+        category: 'auth',
+        action,
+        message,
+        actor: uid ? { uid, email, name, role } : null,
+        target: uid ? { type: 'user', id: uid } : null,
+        metadata: {},
+        userAgent: navigator.userAgent.slice(0, 250),
+      })
+    } catch (e) {
+      console.warn('[auth] log write failed', e)
+    }
+  }
+
   onAuthStateChanged(auth, async (fbUser) => {
     user.value = fbUser
     if (fbUser) {
@@ -118,6 +156,17 @@ export const useAuthStore = defineStore('auth', () => {
     await setDoc(doc(db, 'users', cred.user.uid), docData)
     profile.value = { ...docData, createdAt: new Date() }
 
+    // Audit trail — new citizen registered
+    await writeAuthLog({
+      level: 'success',
+      action: 'auth.register',
+      message: `New citizen registered: ${email}`,
+      uid: cred.user.uid,
+      email: cred.user.email,
+      name: fullName,
+      role: ROLES.CITIZEN,
+    })
+
     return cred.user
   }
 
@@ -130,10 +179,41 @@ export const useAuthStore = defineStore('auth', () => {
     }
     user.value = auth.currentUser
     if (!profile.value) await loadProfile(cred.user.uid)
+
+    // Audit trail — successful sign-in
+    await writeAuthLog({
+      level: 'success',
+      action: 'auth.login',
+      message: `User signed in: ${email}`,
+      uid: cred.user.uid,
+      email: cred.user.email,
+      name: profile.value?.fullName || null,
+      role: profile.value?.role || null,
+    })
+
     return cred.user
   }
 
   async function logout() {
+    // Capture identity BEFORE signOut clears it
+    const _uid = user.value?.uid
+    const _email = user.value?.email
+    const _name = profile.value?.fullName || null
+    const _role = profile.value?.role || null
+
+    // Audit trail — sign-out (best effort, before actual signOut)
+    if (_uid) {
+      await writeAuthLog({
+        level: 'info',
+        action: 'auth.logout',
+        message: `User signed out: ${_email || 'unknown'}`,
+        uid: _uid,
+        email: _email,
+        name: _name,
+        role: _role,
+      })
+    }
+
     await signOut(auth)
     user.value = null
     profile.value = null
@@ -141,11 +221,28 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function resetPassword(email) {
     await sendPasswordResetEmail(auth, email)
+
+    await writeAuthLog({
+      level: 'info',
+      action: 'auth.password_reset_requested',
+      message: `Password reset requested for: ${email}`,
+      email,
+    })
   }
 
   async function resendVerification() {
     if (!user.value) throw new Error('Not signed in')
     await sendEmailVerification(user.value)
+
+    await writeAuthLog({
+      level: 'info',
+      action: 'auth.verification_resent',
+      message: `Verification email resent to: ${user.value.email}`,
+      uid: user.value.uid,
+      email: user.value.email,
+      name: profile.value?.fullName || null,
+      role: profile.value?.role || null,
+    })
   }
 
   async function reloadUser() {
@@ -161,6 +258,10 @@ export const useAuthStore = defineStore('auth', () => {
   async function completeSetup({ newEmail, newPassword }) {
     if (!user.value) throw new Error('Not signed in')
 
+    const _uid = user.value.uid
+    const _oldEmail = user.value.email
+    const _name = profile.value?.fullName || null
+
     await fbUpdateEmail(user.value, newEmail)
     await fbUpdatePassword(user.value, newPassword)
 
@@ -175,6 +276,17 @@ export const useAuthStore = defineStore('auth', () => {
       email: newEmail.toLowerCase(),
       mustChangeCredentials: false,
     }
+
+    // Audit trail — responder completed account setup
+    await writeAuthLog({
+      level: 'success',
+      action: 'auth.setup_completed',
+      message: `Responder completed account setup: ${_oldEmail} → ${newEmail}`,
+      uid: _uid,
+      email: newEmail,
+      name: _name,
+      role: ROLES.RESPONDER,
+    })
   }
 
   return {

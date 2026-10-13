@@ -1,6 +1,7 @@
 // src/composables/useIncidents.js
 //
-// Real-time Firestore subscriptions for the `incidents` collection.
+// Real-time Firestore subscriptions for the `incidents` collection,
+// plus accept/resolve/acknowledge helpers with system-log writes.
 
 import { ref, onBeforeUnmount } from 'vue'
 import {
@@ -16,6 +17,7 @@ import {
 } from 'firebase/firestore'
 import { db } from '@/firebase'
 import { useAuthStore } from '@/stores/auth'
+import { useLogEvent } from '@/composables/useLogEvent'
 
 export const INCIDENT_STATUS = Object.freeze({
   UNVERIFIED: 'unverified',
@@ -142,15 +144,20 @@ export function useIncidents(options = {}) {
  * Accept a pending incident.
  * Atomically sets the responder's uid + flips status to `accepted`.
  * Also sets acknowledgedAt so analytics counts it as acknowledged.
+ * Writes a `system_logs` entry for the audit trail.
  */
 export async function acceptIncident(incidentId, responder) {
   if (!incidentId) throw new Error('incidentId is required')
   if (!responder?.uid) throw new Error('responder.uid is required')
 
+  const { log } = useLogEvent()
+
   const ref = doc(db, 'incidents', incidentId)
   const snap = await getDoc(ref)
   if (!snap.exists()) throw new Error('Incident not found')
   const data = snap.data()
+
+  const ref6 = incidentId.slice(0, 6).toUpperCase()
 
   // Idempotent — don't overwrite an existing ack
   if (data.acknowledgedAt) {
@@ -160,6 +167,20 @@ export async function acceptIncident(incidentId, responder) {
       responderName: responder.fullName || '',
       acceptedAt: data.acceptedAt || serverTimestamp(),
       updatedAt: serverTimestamp(),
+    })
+
+    await log({
+      level: 'success',
+      category: 'incident',
+      action: 'incident.accepted',
+      message: `Responder ${responder.fullName || responder.uid} re-accepted ${ref6}`,
+      actor: {
+        uid: responder.uid,
+        name: responder.fullName,
+        role: 'responder',
+      },
+      target: { type: 'incident', id: incidentId },
+      metadata: { re_accept: true },
     })
     return
   }
@@ -188,27 +209,42 @@ export async function acceptIncident(incidentId, responder) {
     acceptedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   })
+
+  await log({
+    level: 'success',
+    category: 'incident',
+    action: 'incident.accepted',
+    message: `Responder ${responder.fullName || responder.uid} accepted ${ref6} in ${responseTimeSeconds}s`,
+    actor: {
+      uid: responder.uid,
+      name: responder.fullName,
+      role: 'responder',
+    },
+    target: { type: 'incident', id: incidentId },
+    metadata: { response_seconds: responseTimeSeconds },
+  })
 }
 
 /**
  * Mark an incident as resolved ("responded").
  * Called by the responder when they finish the job at the scene.
  *
- * Writes:
- *   - status: 'resolved'
- *   - resolvedAt
- *   - resolvedBy
- *   - respondedDurationSeconds (time from accept → resolve)
- *
- * Also pings the backend so analytics cache is invalidated immediately.
+ * Writes: status='resolved', resolvedAt, resolvedBy,
+ * respondedDurationSeconds (time from accept → resolve).
+ * Also writes a system_logs entry and pings the backend so the
+ * analytics cache is invalidated immediately.
  */
 export async function resolveIncident(incidentId, responder) {
   if (!incidentId) throw new Error('incidentId is required')
+
+  const { log } = useLogEvent()
 
   const ref = doc(db, 'incidents', incidentId)
   const snap = await getDoc(ref)
   if (!snap.exists()) throw new Error('Incident not found')
   const data = snap.data()
+
+  const ref6 = incidentId.slice(0, 6).toUpperCase()
 
   if (data.status === INCIDENT_STATUS.RESOLVED) {
     return { already: true, duration_seconds: data.respondedDurationSeconds ?? null }
@@ -228,6 +264,22 @@ export async function resolveIncident(incidentId, responder) {
     resolvedBy: responder?.uid || null,
     respondedDurationSeconds,
     updatedAt: serverTimestamp(),
+  })
+
+  await log({
+    level: 'success',
+    category: 'incident',
+    action: 'incident.resolved',
+    message: `Responder ${responder?.fullName || responder?.uid || 'unknown'} resolved ${ref6} in ${respondedDurationSeconds}s`,
+    actor: responder?.uid
+      ? {
+          uid: responder.uid,
+          name: responder.fullName,
+          role: 'responder',
+        }
+      : null,
+    target: { type: 'incident', id: incidentId },
+    metadata: { duration_seconds: respondedDurationSeconds },
   })
 
   // Best-effort: clear the backend analytics cache so the admin dashboard
@@ -254,9 +306,12 @@ export async function resolveIncident(incidentId, responder) {
 
 /**
  * Update the status of an incident the current responder owns.
+ * Logs the state change for the audit trail.
  */
-export async function updateIncidentStatus(incidentId, newStatus) {
+export async function updateIncidentStatus(incidentId, newStatus, responder = null) {
   if (!incidentId) throw new Error('incidentId is required')
+
+  const { log } = useLogEvent()
 
   const ref = doc(db, 'incidents', incidentId)
   await updateDoc(ref, {
@@ -265,6 +320,22 @@ export async function updateIncidentStatus(incidentId, newStatus) {
     ...(newStatus === INCIDENT_STATUS.RESOLVED
       ? { resolvedAt: serverTimestamp() }
       : {}),
+  })
+
+  await log({
+    level: 'info',
+    category: 'incident',
+    action: 'incident.status_changed',
+    message: `Incident ${incidentId.slice(0, 6).toUpperCase()} → ${newStatus}`,
+    actor: responder?.uid
+      ? {
+          uid: responder.uid,
+          name: responder.fullName,
+          role: 'responder',
+        }
+      : null,
+    target: { type: 'incident', id: incidentId },
+    metadata: { new_status: newStatus },
   })
 }
 

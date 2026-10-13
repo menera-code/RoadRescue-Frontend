@@ -10,6 +10,7 @@ import {
 import { db } from '@/firebase'
 import { useAuthStore } from '@/stores/auth'
 import { useMediaUpload } from '@/composables/useMediaUpload'
+import { useLogEvent } from '@/composables/useLogEvent'
 import {
   BARANGAY_NAMES,
   searchBarangays,
@@ -20,6 +21,7 @@ const emit = defineEmits(['submitted', 'go-to-map'])
 
 const auth = useAuthStore()
 const media = useMediaUpload()
+const { log } = useLogEvent()
 
 // ---------- Media limits ----------
 const MAX_PHOTOS = 3
@@ -236,6 +238,23 @@ async function submit() {
 
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
+    })
+
+    // 4) Audit trail — record the report in system_logs
+    await log({
+      level: 'info',
+      category: 'incident',
+      action: 'incident.reported',
+      message: `Citizen filed ${selectedType.value} report at ${selectedBarangay.value}`,
+      target: { type: 'incident', id: incidentId },
+      metadata: {
+        type: selectedType.value,
+        barangay: selectedBarangay.value,
+        has_photo: photoFiles.value.length > 0,
+        has_video: !!videoFile.value,
+        auto_detected_barangay:
+          !!autoDetected.value && !userOverrode.value,
+      },
     })
 
     submittedId.value = incidentId
