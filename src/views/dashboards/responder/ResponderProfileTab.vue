@@ -4,24 +4,24 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useIncidents, STATUS_GROUPS } from '@/composables/useIncidents'
 import AppLogo from '@/components/AppLogo.vue'
+import EditProfileModal from '@/components/EditProfileModal.vue'
+import { updateMyProfile } from '@/services/profile'
 import { TERMS_VERSION, TERMS_UPDATED } from '@/data/terms'
 
 const router = useRouter()
 const auth = useAuthStore()
 
 const signingOut = ref(false)
+const showEdit = ref(false)
+const saving = ref(false)
+const editError = ref('')
+const toast = ref('')
 
-// ---------------------------------------------------------------------------
-// LIVE STATS — subscription to all my incidents (any status)
-// We compute counts client-side from the list. Cheap because responders
-// have relatively few incidents, and it stays fresh in real time.
-// ---------------------------------------------------------------------------
 const { incidents: myIncidents, loading: statsLoading } = useIncidents({
   statuses: STATUS_GROUPS.ALL,
   scope: 'assignedToMe',
 })
 
-// ---------- Derived profile values ----------
 const initials = computed(() => {
   const full = auth.profile?.fullName || ''
   return full
@@ -36,7 +36,6 @@ const profile = computed(() => auth.profile || {})
 const isVerified = computed(() => profile.value.status === 'active')
 const isPending = computed(() => profile.value.status === 'pending')
 
-// ---------- Stats ----------
 const totalResponses = computed(() => myIncidents.value.length)
 
 const resolvedCount = computed(() =>
@@ -67,7 +66,7 @@ const avgResponseLabel = computed(() => {
     const r = i.resolvedAt instanceof Date
       ? i.resolvedAt.getTime()
       : new Date(i.resolvedAt).getTime()
-    return (r - a) / 1000 / 60 // minutes
+    return (r - a) / 1000 / 60
   })
 
   durations.sort((a, b) => a - b)
@@ -78,9 +77,6 @@ const avgResponseLabel = computed(() => {
   return `${(median / 60).toFixed(1)} hr`
 })
 
-// ---------------------------------------------------------------------------
-// FORMATTING
-// ---------------------------------------------------------------------------
 function formatDate(ts) {
   if (!ts) return '—'
   const d = ts instanceof Date ? ts : (ts.toDate ? ts.toDate() : new Date(ts))
@@ -91,9 +87,27 @@ function formatDate(ts) {
   })
 }
 
-// ---------------------------------------------------------------------------
-// ACTIONS
-// ---------------------------------------------------------------------------
+function openEdit() {
+  editError.value = ''
+  showEdit.value = true
+}
+
+async function handleEdit(payload) {
+  saving.value = true
+  editError.value = ''
+  try {
+    await updateMyProfile(payload)
+    if (auth.reloadProfile) await auth.reloadProfile()
+    showEdit.value = false
+    toast.value = 'Profile updated.'
+    setTimeout(() => (toast.value = ''), 3000)
+  } catch (e) {
+    editError.value = e.message || 'Could not save. Try again.'
+  } finally {
+    saving.value = false
+  }
+}
+
 async function signOut() {
   if (signingOut.value) return
   signingOut.value = true
@@ -113,7 +127,6 @@ async function signOut() {
       <p class="muted">Your responder account and activity.</p>
     </header>
 
-    <!-- ---------- Hero ---------- -->
     <div class="hero">
       <div class="avatar" aria-hidden="true">{{ initials || '🚑' }}</div>
       <h2 class="name">{{ profile.fullName || '—' }}</h2>
@@ -133,33 +146,25 @@ async function signOut() {
       </div>
     </div>
 
-    <!-- ---------- Stats grid ---------- -->
     <section class="stats">
       <div class="stat">
         <p class="stat-value">{{ statsLoading ? '—' : totalResponses }}</p>
         <p class="tiny stat-label">Responses</p>
       </div>
       <div class="stat">
-        <p class="stat-value">
-          {{ statsLoading ? '—' : resolvedCount }}
-        </p>
+        <p class="stat-value">{{ statsLoading ? '—' : resolvedCount }}</p>
         <p class="tiny stat-label">Resolved</p>
       </div>
       <div class="stat">
-        <p class="stat-value">
-          {{ statsLoading ? '—' : thisWeekCount }}
-        </p>
+        <p class="stat-value">{{ statsLoading ? '—' : thisWeekCount }}</p>
         <p class="tiny stat-label">This week</p>
       </div>
       <div class="stat">
-        <p class="stat-value">
-          {{ statsLoading ? '—' : avgResponseLabel }}
-        </p>
+        <p class="stat-value">{{ statsLoading ? '—' : avgResponseLabel }}</p>
         <p class="tiny stat-label">Avg response</p>
       </div>
     </section>
 
-    <!-- ---------- Account details ---------- -->
     <div class="card">
       <div class="row">
         <span class="row-label">Email</span>
@@ -189,7 +194,6 @@ async function signOut() {
       </div>
     </div>
 
-    <!-- ---------- Terms ---------- -->
     <div class="card card--small">
       <div class="row">
         <span class="row-label">Terms accepted</span>
@@ -205,10 +209,7 @@ async function signOut() {
 
     <div class="spacer" />
 
-    <!-- ---------- Actions ---------- -->
-    <button class="btn btn--ghost" disabled>
-      Edit profile (coming soon)
-    </button>
+    <button class="btn btn--ghost" @click="openEdit">Edit profile</button>
 
     <button
       class="btn btn--primary"
@@ -222,6 +223,20 @@ async function signOut() {
       <AppLogo :size="24" />
       <span class="tiny">RoadRescue · Responder</span>
     </footer>
+
+    <EditProfileModal
+      :open="showEdit"
+      :profile="profile"
+      :role="profile.role || 'responder'"
+      :saving="saving"
+      :error-message="editError"
+      @close="showEdit = false"
+      @submit="handleEdit"
+    />
+
+    <Transition name="fade">
+      <div v-if="toast" class="toast">{{ toast }}</div>
+    </Transition>
   </section>
 </template>
 
@@ -232,19 +247,10 @@ async function signOut() {
   min-height: 100%;
 }
 
-.head {
-  margin-bottom: 20px;
-}
+.head { margin-bottom: 20px; }
+.head .h1 { font-size: 1.5rem; }
+.head .muted { margin-top: 4px; }
 
-.head .h1 {
-  font-size: 1.5rem;
-}
-
-.head .muted {
-  margin-top: 4px;
-}
-
-/* ---------- Hero ---------- */
 .hero {
   display: flex;
   flex-direction: column;
@@ -252,17 +258,11 @@ async function signOut() {
   gap: 8px;
   padding: 12px 0 22px;
 }
-
 .avatar {
   width: 76px;
   height: 76px;
   border-radius: 50%;
-  background: linear-gradient(
-    160deg,
-    #3cb886 0%,
-    var(--accent) 55%,
-    #267a58 100%
-  );
+  background: linear-gradient(160deg, #3cb886 0%, var(--accent) 55%, #267a58 100%);
   color: #fff;
   display: grid;
   place-items: center;
@@ -271,21 +271,18 @@ async function signOut() {
   letter-spacing: 0.02em;
   box-shadow: 0 8px 20px rgba(47, 158, 115, 0.35);
 }
-
 .name {
   font-size: 1.125rem;
   font-weight: 700;
   margin-top: 4px;
   text-align: center;
 }
-
 .badge-row {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   justify-content: center;
 }
-
 .role-badge {
   font-size: 0.6875rem;
   font-weight: 700;
@@ -296,7 +293,6 @@ async function signOut() {
   padding: 4px 10px;
   border-radius: 99px;
 }
-
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -310,17 +306,14 @@ async function signOut() {
   background: var(--bg-input);
   color: var(--text-muted);
 }
-
 .status-badge--ok {
   color: var(--accent);
   background: var(--accent-soft);
 }
-
 .status-badge--pending {
   color: #f59e0b;
   background: rgba(245, 158, 11, 0.14);
 }
-
 .status-dot {
   width: 6px;
   height: 6px;
@@ -330,14 +323,12 @@ async function signOut() {
   opacity: 0.4;
 }
 
-/* ---------- Stats ---------- */
 .stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 8px;
   margin-bottom: 16px;
 }
-
 .stat {
   background: var(--bg-elev);
   border: 1px solid var(--border);
@@ -345,7 +336,6 @@ async function signOut() {
   padding: 12px 8px;
   text-align: center;
 }
-
 .stat-value {
   font-size: 1.0625rem;
   font-weight: 750;
@@ -354,12 +344,8 @@ async function signOut() {
   margin-bottom: 2px;
   letter-spacing: -0.01em;
 }
+.stat-label { line-height: 1.2; }
 
-.stat-label {
-  line-height: 1.2;
-}
-
-/* ---------- Cards ---------- */
 .card {
   background: var(--bg-elev);
   border: 1px solid var(--border);
@@ -367,11 +353,7 @@ async function signOut() {
   padding: 6px 16px;
   margin-bottom: 12px;
 }
-
-.card--small {
-  padding: 12px 16px;
-}
-
+.card--small { padding: 12px 16px; }
 .row {
   display: flex;
   justify-content: space-between;
@@ -379,17 +361,12 @@ async function signOut() {
   gap: 12px;
   padding: 12px 0;
 }
-
-.row + .row {
-  border-top: 1px solid var(--border);
-}
-
+.row + .row { border-top: 1px solid var(--border); }
 .row-label {
   font-size: 0.8125rem;
   color: var(--text-muted);
   flex-shrink: 0;
 }
-
 .row-value {
   font-size: 0.9375rem;
   color: var(--text);
@@ -397,25 +374,14 @@ async function signOut() {
   word-break: break-word;
   min-width: 0;
 }
+.terms-note { line-height: 1.5; padding-top: 4px; }
 
-.terms-note {
-  line-height: 1.5;
-  padding-top: 4px;
-}
-
-/* ---------- Actions ---------- */
 .spacer {
   flex: 1;
   min-height: 16px;
 }
-
-.profile-tab .btn {
-  margin-bottom: 10px;
-}
-
-.profile-tab .btn:disabled {
-  opacity: 0.5;
-}
+.profile-tab .btn { margin-bottom: 10px; }
+.profile-tab .btn:disabled { opacity: 0.5; }
 
 .foot {
   display: flex;
@@ -424,4 +390,20 @@ async function signOut() {
   gap: 8px;
   padding-top: 16px;
 }
+
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  padding: 12px 18px;
+  border-radius: 10px;
+  background: #16a34a;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  z-index: 2000;
+}
+.fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
 </style>

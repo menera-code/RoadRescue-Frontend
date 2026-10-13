@@ -3,11 +3,18 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import AppLogo from '@/components/AppLogo.vue'
+import EditProfileModal from '@/components/EditProfileModal.vue'
+import { updateMyProfile } from '@/services/profile'
 import { TERMS_VERSION, TERMS_UPDATED } from '@/data/terms'
 
 const router = useRouter()
 const auth = useAuthStore()
 const signingOut = ref(false)
+
+const showEdit = ref(false)
+const saving = ref(false)
+const editError = ref('')
+const toast = ref('')
 
 const initials = computed(() => {
   const full = auth.profile?.fullName || ''
@@ -22,13 +29,36 @@ function formatDate(ts) {
   return d.toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })
 }
 
+function openEdit() {
+  editError.value = ''
+  showEdit.value = true
+}
+
+async function handleEdit(payload) {
+  saving.value = true
+  editError.value = ''
+  try {
+    await updateMyProfile(payload)
+    if (auth.reloadProfile) await auth.reloadProfile()
+    showEdit.value = false
+    toast.value = 'Profile updated.'
+    setTimeout(() => (toast.value = ''), 3000)
+  } catch (e) {
+    editError.value = e.message || 'Could not save. Try again.'
+  } finally {
+    saving.value = false
+  }
+}
+
 async function signOut() {
   if (signingOut.value) return
   signingOut.value = true
   try {
     await auth.logout()
     router.replace({ name: 'home' })
-  } finally { signingOut.value = false }
+  } finally {
+    signingOut.value = false
+  }
 }
 </script>
 
@@ -40,7 +70,6 @@ async function signOut() {
     </header>
 
     <div class="profile-layout">
-      <!-- LEFT: hero identity card -->
       <aside class="hero-col">
         <div class="hero">
           <div class="avatar" aria-hidden="true">{{ initials || '⚡' }}</div>
@@ -55,7 +84,6 @@ async function signOut() {
         </div>
       </aside>
 
-      <!-- RIGHT: details -->
       <div class="details-col">
         <div class="card">
           <div class="row">
@@ -88,6 +116,7 @@ async function signOut() {
         </div>
 
         <div class="actions">
+          <button class="btn btn--ghost" @click="openEdit">Edit profile</button>
           <button class="btn btn--primary" :disabled="signingOut" @click="signOut">
             {{ signingOut ? 'Signing out…' : 'Sign Out' }}
           </button>
@@ -99,6 +128,20 @@ async function signOut() {
         </footer>
       </div>
     </div>
+
+    <EditProfileModal
+      :open="showEdit"
+      :profile="profile"
+      :role="profile.role || 'admin'"
+      :saving="saving"
+      :error-message="editError"
+      @close="showEdit = false"
+      @submit="handleEdit"
+    />
+
+    <Transition name="fade">
+      <div v-if="toast" class="toast">{{ toast }}</div>
+    </Transition>
   </section>
 </template>
 
@@ -115,7 +158,6 @@ async function signOut() {
   gap: 16px;
 }
 
-/* Hero */
 .hero-col { min-width: 0; }
 .hero {
   display: flex;
@@ -181,7 +223,6 @@ async function signOut() {
   opacity: 0.4;
 }
 
-/* Details */
 .details-col { min-width: 0; display: flex; flex-direction: column; }
 .card {
   background: var(--bg-elev);
@@ -213,8 +254,7 @@ async function signOut() {
 }
 .terms-note { line-height: 1.5; padding-top: 4px; }
 
-.actions { margin-top: 4px; }
-.actions .btn { width: 100%; }
+.actions { margin-top: 4px; display: flex; flex-direction: column; gap: 10px; }
 
 .foot {
   display: flex;
@@ -224,12 +264,26 @@ async function signOut() {
   padding-top: 16px;
 }
 
-/* ============================================================
-   RESPONSIVE
-   ============================================================ */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  padding: 12px 18px;
+  border-radius: 10px;
+  background: #16a34a;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  z-index: 2000;
+}
+.fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+
 @media (min-width: 640px) {
   .head .h1 { font-size: 1.75rem; }
-  .actions .btn { width: auto; min-width: 200px; }
+  .actions { flex-direction: row; }
+  .actions .btn { flex: 1; max-width: 220px; }
   .foot { justify-content: flex-start; }
 }
 
@@ -243,24 +297,14 @@ async function signOut() {
     gap: 24px;
     align-items: start;
   }
-
-  .hero-col {
-    position: sticky;
-    top: 24px;
-  }
-
+  .hero-col { position: sticky; top: 24px; }
   .hero {
     background: var(--bg-elev);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     padding: 32px 24px;
   }
-
-  .avatar {
-    width: 96px;
-    height: 96px;
-    font-size: 1.875rem;
-  }
+  .avatar { width: 96px; height: 96px; font-size: 1.875rem; }
   .name { font-size: 1.25rem; margin-top: 12px; }
 }
 
