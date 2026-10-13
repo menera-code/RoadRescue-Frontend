@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import AppLogo from '@/components/AppLogo.vue'
 import TermsModal from '@/components/TermsModal.vue'
+import QRCodeButton from '@/components/QRCodeButton.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -18,6 +19,9 @@ function getHelp() {
 
 <template>
   <main class="screen home">
+    <!-- Floating QR button — top-right corner -->
+    <QRCodeButton />
+
     <div class="home-top">
       <AppLogo :size="96" />
       <h1 class="h1">RoadRescue</h1>
