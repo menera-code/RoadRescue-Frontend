@@ -1,4 +1,3 @@
-// Force iOS to activate the service worker immediately
 self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
@@ -8,7 +7,7 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('push', function(event) {
-  let data = { title: 'RoadRescue', body: 'New incident assigned' };
+  let data = { title: 'RoadRescue', body: 'New incident assigned', url: '/' };
   
   if (event.data) {
     try {
@@ -22,10 +21,9 @@ self.addEventListener('push', function(event) {
     body: data.body,
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
-    vibrate: [200, 100, 200],
-    data: data.data || {},
-    requireInteraction: true, // Keeps the notification on screen
-    silent: false
+    data: { url: data.url }, // Store the flat URL here
+    requireInteraction: true,
+    tag: data.tag || 'incident'
   };
 
   event.waitUntil(
