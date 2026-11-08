@@ -1,11 +1,19 @@
 const API = 'https://roadrescue-backend-swdv.onrender.com';
 
 function urlBase64ToUint8Array(base64String) {
-  const cleanBase64 = base64String.replace(/\s+/g, '').replace(/=/g, '');
-  const padding = '='.repeat((4 - (cleanBase64.length % 4)) % 4);
-  const base64 = (cleanBase64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
   const raw = atob(base64);
-  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+  const outputArray = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; ++i) {
+    outputArray[i] = raw.charCodeAt(i);
+  }
+  
+  // Safari iOS strict requirement: must be the raw 65-byte point, not SPKI
+  if (outputArray.length === 91 && outputArray[0] === 0x30) {
+    return outputArray.slice(26);
+  }
+  return outputArray;
 }
 
 export async function enablePush(responderId) {
@@ -35,7 +43,6 @@ export async function enablePush(responderId) {
       return;
     }
 
-    // Let's explicitly test the fetch to catch the error
     let key;
     try {
       const res = await fetch(`${API}/api/push/vapid-public-key`);
