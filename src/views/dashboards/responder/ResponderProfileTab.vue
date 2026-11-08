@@ -8,6 +8,9 @@ import EditProfileModal from '@/components/EditProfileModal.vue'
 import { updateMyProfile } from '@/services/profile'
 import { TERMS_VERSION, TERMS_UPDATED } from '@/data/terms'
 
+// 👇 Added Push Import
+import { enablePush } from '@/composables/usePush'
+
 const router = useRouter()
 const auth = useAuthStore()
 
@@ -118,6 +121,15 @@ async function signOut() {
     signingOut.value = false
   }
 }
+
+// 👇 Added handler for the push button
+function handleEnablePush() {
+  if (auth.user && auth.user.uid) {
+    enablePush(auth.user.uid)
+  } else {
+    alert('Error: Could not find your user ID.')
+  }
+}
 </script>
 
 <template>
@@ -193,6 +205,32 @@ async function signOut() {
         <span class="row-value">{{ formatDate(profile.createdAt) }}</span>
       </div>
     </div>
+
+    <!-- 👇 NEW PUSH NOTIFICATION CARD -->
+    <div class="card">
+      <div class="row">
+        <span class="row-label">App Notifications</span>
+        <button
+          @click="handleEnablePush"
+          style="
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: var(--radius);
+            font-weight: 600;
+            font-size: 0.8125rem;
+            cursor: pointer;
+            transition: opacity 0.2s;
+          "
+          onmouseover="this.style.opacity='0.8'"
+          onmouseout="this.style.opacity='1'"
+        >
+          🔔 Enable Push
+        </button>
+      </div>
+    </div>
+    <!-- 👆 END NEW CARD -->
 
     <div class="card card--small">
       <div class="row">
@@ -357,7 +395,7 @@ async function signOut() {
 .row {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
   padding: 12px 0;
 }
