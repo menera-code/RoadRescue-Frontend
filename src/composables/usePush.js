@@ -1,7 +1,7 @@
-const API = 'https://roadrescue-backend-swdv.onrender.com';
+const API = import.meta.env.VITE_API_BASE || 'https://your-backend-url.onrender.com';
 
 function urlBase64ToUint8Array(base64String) {
-  // Aggressively strip whitespace and padding (=) to satisfy strict iOS Safari rules
+  // Strip whitespace and padding for iOS Safari
   const cleanBase64 = base64String.replace(/\s+/g, '').replace(/=/g, '');
   const padding = '='.repeat((4 - (cleanBase64.length % 4)) % 4);
   const base64 = (cleanBase64 + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -10,8 +10,8 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 export async function enablePush(responderId) {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    alert('Push is not supported on this browser.');
+  if (!('serviceWorker' in navigator)) {
+    alert('Push is not supported: Service Worker missing.');
     return;
   }
 
@@ -21,17 +21,25 @@ export async function enablePush(responderId) {
     return;
   }
 
-  const perm = await Notification.requestPermission();
-  if (perm !== 'granted') {
-    alert('Notification permission was denied.');
-    return;
-  }
-
   try {
+    // Force register the service worker (fixes iOS lazy-loading issue)
+    await navigator.serviceWorker.register('/sw.js');
     const reg = await navigator.serviceWorker.ready;
+
+    // Check for PushManager AFTER the service worker is ready
+    if (!('PushManager' in window)) {
+      alert('PushManager is missing. You may need to update your iPhone to iOS 16.4 or later.');
+      return;
+    }
+
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') {
+      alert('Notification permission was denied.');
+      return;
+    }
+
     const { key } = await fetch(`${API}/api/push/vapid-public-key`).then((r) => r.json());
     
-    // Pass the key to our cleaner function
     const sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(key),
