@@ -130,6 +130,20 @@ function handleEnablePush() {
     alert('Error: Could not find your user ID.')
   }
 }
+
+// 👇 Added handler for the Test Notification button
+async function testNotification() {
+  if (Notification.permission === 'granted') {
+    const reg = await navigator.serviceWorker.ready;
+    reg.showNotification('Test Alert', {
+      body: 'If you see this, notifications are working!',
+      icon: '/icons/icon-192.png',
+      requireInteraction: true
+    });
+  } else {
+    alert('Permission not granted yet. Please click Enable Push first.');
+  }
+}
 </script>
 
 <template>
@@ -206,28 +220,48 @@ function handleEnablePush() {
       </div>
     </div>
 
-    <!-- 👇 NEW PUSH NOTIFICATION CARD -->
+    <!-- 👇 UPDATED PUSH NOTIFICATION CARD -->
     <div class="card">
       <div class="row">
         <span class="row-label">App Notifications</span>
-        <button
-          @click="handleEnablePush"
-          style="
-            background: var(--accent);
-            color: #fff;
-            border: none;
-            padding: 8px 16px;
-            border-radius: var(--radius);
-            font-weight: 600;
-            font-size: 0.8125rem;
-            cursor: pointer;
-            transition: opacity 0.2s;
-          "
-          onmouseover="this.style.opacity='0.8'"
-          onmouseout="this.style.opacity='1'"
-        >
-          🔔 Enable Push
-        </button>
+        <div style="display: flex; gap: 8px;">
+          <button
+            @click="handleEnablePush"
+            style="
+              background: var(--accent);
+              color: #fff;
+              border: none;
+              padding: 8px 16px;
+              border-radius: var(--radius);
+              font-weight: 600;
+              font-size: 0.8125rem;
+              cursor: pointer;
+              transition: opacity 0.2s;
+            "
+            onmouseover="this.style.opacity='0.8'"
+            onmouseout="this.style.opacity='1'"
+          >
+            🔔 Enable Push
+          </button>
+          <button
+            @click="testNotification"
+            style="
+              background: #333;
+              color: #fff;
+              border: none;
+              padding: 8px 16px;
+              border-radius: var(--radius);
+              font-weight: 600;
+              font-size: 0.8125rem;
+              cursor: pointer;
+              transition: opacity 0.2s;
+            "
+            onmouseover="this.style.opacity='0.8'"
+            onmouseout="this.style.opacity='1'"
+          >
+            Test Alert
+          </button>
+        </div>
       </div>
     </div>
     <!-- 👆 END NEW CARD -->
