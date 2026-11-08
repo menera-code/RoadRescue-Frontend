@@ -1,30 +1,53 @@
-self.addEventListener('push', (event) => {
-  const data = event.data ? event.data.json() : {};
-  event.waitUntil(
-    self.registration.showNotification(data.title || 'RoadRescue', {
-      body: data.body || 'New incident assigned',
-      icon: '/icons/icon-192.png',
-      badge: '/icons/icon-192.png',
-      data: data.data || {},
-      requireInteraction: true, // Keeps it on screen until tapped
-    })
-  );
+// Force iOS to activate the service worker immediately
+self.addEventListener('install', (event) => {
+  self.skipWaiting();
 });
 
-self.addEventListener('notificationclick', (event) => {
-  event.notification.close();
-  const url = event.notification.data?.url || '/';
-  event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
-      for (const c of list) if ('focus' in c) { c.navigate(url); return c.focus(); }
-      return clients.openWindow(url);
-    })
-  );
+self.addEventListener('activate', (event) => {
+  event.waitUntil(clients.claim());
 });
 
-// 👇 THIS KEEPS iOS FROM SLEEPING THE SERVICE WORKER
-self.addEventListener('sync', (event) => {
-  if (event.tag === 'sync-incidents') {
-    event.waitUntil(fetch('https://roadrescue-backend-swdv.onrender.com/health'));
+self.addEventListener('push', function(event) {
+  let data = { title: 'RoadRescue', body: 'New incident assigned' };
+  
+  if (event.data) {
+    try {
+      data = event.data.json();
+    } catch (e) {
+      data.body = event.data.text();
+    }
   }
+
+  const options = {
+    body: data.body,
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    vibrate: [200, 100, 200],
+    data: data.data || {},
+    requireInteraction: true, // Keeps the notification on screen
+    silent: false
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(data.title, options)
+  );
+});
+
+self.addEventListener('notificationclick', function(event) {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) ? event.notification.data.url : '/';
+  
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
+      for (let i = 0; i < clientList.length; i++) {
+        const client = clientList[i];
+        if (client.url.includes(url) && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      if (clients.openWindow) {
+        return clients.openWindow(url);
+      }
+    })
+  );
 });
