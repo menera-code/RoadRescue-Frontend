@@ -1,4 +1,4 @@
-const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+const API = 'https://roadrescue-backend-swdv.onrender.com';
 
 function urlBase64ToUint8Array(base64String) {
   // Aggressively strip whitespace and padding (=) to satisfy strict iOS Safari rules
