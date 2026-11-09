@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
+import { getIncidentIcon, getIncidentLabel } from '@/utils/incidentTypes'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
 
@@ -89,35 +90,12 @@ const hasFilters = computed(
 // ---------------------------------------------------------------------------
 // FORMATTERS
 // ---------------------------------------------------------------------------
-const TYPE_LABELS = {
-  flat_tire:       'Flat Tire',
-  battery:         'Battery',
-  fuel:            'Out of Fuel',
-  stalled_vehicle: 'Stalled',
-  minor_collision: 'Minor Crash',
-  major_collision: 'Major Crash',
-  vehicle_fire:    'Vehicle Fire',
-  road_hazard:     'Road Hazard',
-  other:           'Other',
+function typeLabel(type) {
+  return getIncidentLabel(type)
 }
 
-const TYPE_ICONS = {
-  flat_tire:       '🛞',
-  battery:         '🔋',
-  fuel:            '⛽',
-  stalled_vehicle: '🛑',
-  minor_collision: '🚗',
-  major_collision: '💥',
-  vehicle_fire:    '🔥',
-  road_hazard:     '⚠️',
-  other:           '❓',
-}
-
-function typeLabel(t) {
-  return TYPE_LABELS[t] || t
-}
-function typeIcon(t) {
-  return TYPE_ICONS[t] || '❓'
+function typeIcon(type) {
+  return getIncidentIcon(type)
 }
 
 function formatDateTime(iso) {
