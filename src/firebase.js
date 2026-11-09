@@ -22,15 +22,3 @@ export const storage = getStorage(app)
 export const rtdb = getDatabase(app)
 export default app
 
-// TEMPORARY: Admin API authentication debugging
-if (typeof window !== 'undefined') {
-  window.__roadrescueGetIdToken = async () => {
-    const user = auth.currentUser
-
-    if (!user) {
-      throw new Error('No authenticated Firebase user')
-    }
-
-    return await user.getIdToken(true)
-  }
-}
