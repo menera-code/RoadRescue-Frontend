@@ -22,12 +22,12 @@ const activeFilter = ref('new') // 'new' | 'mine'
 // SUBSCRIPTIONS
 // ---------------------------------------------------------------------------
 const {
-  incidents: newIncidents,
+  incidents: newIncidentsRaw,
   loading: loadingNew,
   error: errorNew,
 } = useIncidents({
   statuses: STATUS_GROUPS.OPEN,
-  scope: 'assignedToMe', // <--- FIXED: Changed from 'all' to 'assignedToMe'
+  scope: 'all', // Reverted to 'all'
 })
 
 const {
@@ -37,6 +37,23 @@ const {
 } = useIncidents({
   statuses: STATUS_GROUPS.ACTIVE,
   scope: 'assignedToMe',
+})
+
+// ---------------------------------------------------------------------------
+// FRONTEND FILTERING (The Fix)
+// ---------------------------------------------------------------------------
+// Only show "New" incidents if the current responder's UID is in the assigned array
+const newIncidents = computed(() => {
+  if (!auth.user?.uid) return []
+  
+  return newIncidentsRaw.value.filter((inc) => {
+    // Check the array (if your backend assigned multiple responders)
+    if (Array.isArray(inc.assignedResponderUids)) {
+      return inc.assignedResponderUids.includes(auth.user.uid)
+    }
+    // Fallback: Check the single UID field (legacy schema)
+    return inc.assignedResponderUid === auth.user.uid
+  })
 })
 
 const activeList = computed(() =>
