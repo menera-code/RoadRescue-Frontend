@@ -76,8 +76,22 @@ async function handleSubmit(payload) {
   try {
     const { createUser, updateUser } = await import('@/services/adminUsers')
 
+    // ✅ FIX: Map camelCase payload to snake_case for the FastAPI backend
+    const apiPayload = {
+      email: payload.email,
+      display_name: payload.displayName || payload.display_name,
+      phone: payload.phone,
+      role: payload.role,
+      responder_type: payload.responderType || payload.responder_type,
+      license_number: payload.licenseNumber || payload.license_number,
+      service_area: payload.serviceArea || payload.service_area,
+      barangay: payload.barangay,
+      agency: payload.agency,
+      permissions: payload.permissions
+    }
+
     if (modalMode.value === 'create') {
-      const res = await createUser(payload)
+      const res = await createUser(apiPayload) // <-- Use mapped payload
       let msg = res.sms_ok
         ? 'User created. Reset link sent by SMS.'
         : 'User created.'
@@ -91,7 +105,7 @@ async function handleSubmit(payload) {
       }
       showToast(msg)
     } else {
-      await updateUser(payload.uid || modalInitial.value.uid, payload)
+      await updateUser(payload.uid || modalInitial.value.uid, apiPayload) // <-- Use mapped payload
       showToast('User updated.')
     }
 
