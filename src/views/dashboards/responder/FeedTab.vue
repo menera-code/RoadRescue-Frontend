@@ -27,7 +27,7 @@ const {
   error: errorNew,
 } = useIncidents({
   statuses: STATUS_GROUPS.OPEN,
-  scope: 'all',
+  scope: 'assignedToMe', // <--- FIXED: Changed from 'all' to 'assignedToMe'
 })
 
 const {
