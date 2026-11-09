@@ -1,5 +1,10 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import {
+  getIncidentIcon,
+  getIncidentLabel,
+  normalizeIncidentType,
+} from '@/utils/incidentTypes'
 import { useAuthStore } from '@/stores/auth'
 import MediaGallery from '@/components/MediaGallery.vue'
 import {
@@ -51,45 +56,48 @@ const {
 })
 
 // ---------------------------------------------------------------------------
-// NEW TAB FILTER (unchanged behavior)
+// NEW TAB FILTER
 // ---------------------------------------------------------------------------
 const newIncidents = computed(() => {
   if (!auth.user?.uid) return []
+
   return newIncidentsRaw.value.filter((inc) => {
     if (Array.isArray(inc.assignedResponderUids)) {
       return inc.assignedResponderUids.includes(auth.user.uid)
     }
+
     return inc.assignedResponderUid === auth.user.uid
   })
 })
 
 // ---------------------------------------------------------------------------
-// HISTORY FILTERS (client-side)
+// HISTORY FILTERS
 // ---------------------------------------------------------------------------
-const historyDateFilter   = ref('all')   // 'today' | '7d' | '30d' | 'all'
-const historyTypeFilter   = ref('all')
+const historyDateFilter = ref('all')
+const historyTypeFilter = ref('all')
 const historyStatusFilter = ref('all')
 
 const HISTORY_TYPE_OPTIONS = [
-  { value: 'all',             label: 'All types' },
-  { value: 'accident',        label: '🚗 Accident' },
-  { value: 'medical',         label: '🚑 Medical' },
-  { value: 'fire',            label: '🔥 Fire' },
-  { value: 'road_hazard',     label: '⚠️ Road hazard' },
-  { value: 'emergency',       label: '🆘 Emergency' },
-  // legacy types — kept for incidents created before the type rename
-  { value: 'flat_tire',       label: '🛞 Flat tire' },
-  { value: 'battery',         label: '🔋 Dead battery' },
-  { value: 'fuel',            label: '⛽ Out of fuel' },
+  { value: 'all', label: 'All types' },
+  { value: 'accident', label: '🚗 Accident' },
+  { value: 'medical', label: '🚑 Medical' },
+  { value: 'fire', label: '🔥 Fire' },
+  { value: 'road_hazard', label: '⚠️ Road hazard' },
+  { value: 'emergency', label: '🆘 Emergency' },
+
+  // Legacy types — kept for incidents created before the type rename
+  { value: 'flat_tire', label: '🛞 Flat tire' },
+  { value: 'battery', label: '🔋 Dead battery' },
+  { value: 'fuel', label: '⛽ Out of fuel' },
   { value: 'stalled_vehicle', label: '🛑 Stalled vehicle' },
   { value: 'minor_collision', label: '🚗 Minor crash' },
   { value: 'major_collision', label: '💥 Major crash' },
-  { value: 'vehicle_fire',    label: '🔥 Vehicle fire' },
+  { value: 'vehicle_fire', label: '🔥 Vehicle fire' },
 ]
 
 const HISTORY_STATUS_OPTIONS = [
-  { value: 'all',       label: 'All statuses' },
-  { value: 'resolved',  label: 'Resolved' },
+  { value: 'all', label: 'All statuses' },
+  { value: 'resolved', label: 'Resolved' },
   { value: 'cancelled', label: 'Cancelled' },
 ]
 
@@ -97,6 +105,7 @@ function _toDate(value) {
   if (!value) return null
   if (value instanceof Date) return value
   if (typeof value.toDate === 'function') return value.toDate()
+
   const d = new Date(value)
   return isNaN(d.getTime()) ? null : d
 }
@@ -109,18 +118,32 @@ const historyFiltersActive = computed(() =>
 
 const filteredHistory = computed(() => {
   const now = Date.now()
-  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0)
+  const startOfToday = new Date()
+  startOfToday.setHours(0, 0, 0, 0)
 
   const filtered = historyIncidents.value.filter((inc) => {
-    if (historyTypeFilter.value !== 'all' && inc.type !== historyTypeFilter.value) {
+    if (
+      historyTypeFilter.value !== 'all' &&
+      normalizeIncidentType(inc.type) !==
+        normalizeIncidentType(historyTypeFilter.value)
+    ) {
       return false
     }
-    if (historyStatusFilter.value !== 'all' && inc.status !== historyStatusFilter.value) {
+
+    if (
+      historyStatusFilter.value !== 'all' &&
+      inc.status !== historyStatusFilter.value
+    ) {
       return false
     }
+
     if (historyDateFilter.value !== 'all') {
-      const d = _toDate(inc.resolvedAt || inc.updatedAt || inc.createdAt)
+      const d = _toDate(
+        inc.resolvedAt || inc.updatedAt || inc.createdAt
+      )
+
       if (!d) return false
+
       if (historyDateFilter.value === 'today') {
         if (d.getTime() < startOfToday.getTime()) return false
       } else if (historyDateFilter.value === '7d') {
@@ -129,13 +152,18 @@ const filteredHistory = computed(() => {
         if (d.getTime() < now - 30 * 86400000) return false
       }
     }
+
     return true
   })
 
   // Sort by most recently resolved/updated, falling back to createdAt
   return [...filtered].sort((a, b) => {
-    const da = _toDate(a.resolvedAt || a.updatedAt || a.createdAt)?.getTime() || 0
-    const db = _toDate(b.resolvedAt || b.updatedAt || b.createdAt)?.getTime() || 0
+    const da =
+      _toDate(a.resolvedAt || a.updatedAt || a.createdAt)?.getTime() || 0
+
+    const db =
+      _toDate(b.resolvedAt || b.updatedAt || b.createdAt)?.getTime() || 0
+
     return db - da
   })
 })
@@ -144,20 +172,23 @@ const filteredHistory = computed(() => {
 // ACTIVE LIST + LOADING / ERROR
 // ---------------------------------------------------------------------------
 const activeList = computed(() => {
-  if (activeFilter.value === 'new')     return newIncidents.value
-  if (activeFilter.value === 'mine')    return myIncidents.value
+  if (activeFilter.value === 'new') return newIncidents.value
+  if (activeFilter.value === 'mine') return myIncidents.value
+
   return filteredHistory.value
 })
 
 const isLoading = computed(() => {
-  if (activeFilter.value === 'new')     return loadingNew.value
-  if (activeFilter.value === 'mine')    return loadingMine.value
+  if (activeFilter.value === 'new') return loadingNew.value
+  if (activeFilter.value === 'mine') return loadingMine.value
+
   return loadingHistory.value
 })
 
 const hasError = computed(() => {
-  if (activeFilter.value === 'new')     return errorNew.value
-  if (activeFilter.value === 'mine')    return errorMine.value
+  if (activeFilter.value === 'new') return errorNew.value
+  if (activeFilter.value === 'mine') return errorMine.value
+
   return errorHistory.value
 })
 
@@ -169,68 +200,60 @@ const locating = ref(false)
 
 function requestLocation() {
   if (!('geolocation' in navigator)) return
+
   locating.value = true
+
   navigator.geolocation.getCurrentPosition(
     (pos) => {
       locating.value = false
-      userPos.value = { lat: pos.coords.latitude, lng: pos.coords.longitude }
+
+      userPos.value = {
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+      }
     },
-    () => { locating.value = false },
-    { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+    () => {
+      locating.value = false
+    },
+    {
+      enableHighAccuracy: true,
+      timeout: 8000,
+      maximumAge: 60000,
+    }
   )
 }
+
 onMounted(requestLocation)
 
 // ---------------------------------------------------------------------------
 // HELPERS
 // ---------------------------------------------------------------------------
-const TYPE_ICONS = {
-  flat_tire:       '🛞',
-  battery:         '🔋',
-  fuel:            '⛽',
-  stalled_vehicle: '🛑',
-  minor_collision: '🚗',
-  major_collision: '💥',
-  vehicle_fire:    '🔥',
-  road_hazard:     '⚠️',
-  emergency:       '🚨',
-  accident:        '🚗',
-  medical:         '🚑',
-  fire:            '🔥',
+function typeIcon(type) {
+  return getIncidentIcon(type)
 }
 
-const TYPE_LABELS = {
-  flat_tire:       'Flat Tire',
-  battery:         'Dead Battery',
-  fuel:            'Out of Fuel',
-  stalled_vehicle: 'Stalled Vehicle',
-  minor_collision: 'Minor Crash',
-  major_collision: 'Major Crash',
-  vehicle_fire:    'Vehicle Fire',
-  road_hazard:     'Road Hazard',
-  emergency:       'Emergency (SOS)',
-  accident:        'Accident',
-  medical:         'Medical',
-  fire:            'Fire',
+function typeLabel(type) {
+  return getIncidentLabel(type)
 }
-
-function typeIcon(type)  { return TYPE_ICONS[type]  || '❓' }
-function typeLabel(type) { return TYPE_LABELS[type] || 'Incident' }
 
 function timeAgo(date) {
   const d = _toDate(date)
   if (!d) return ''
+
   const diff = Math.floor((Date.now() - d.getTime()) / 1000)
+
   if (diff < 30) return 'Just now'
   if (diff < 60) return `${diff}s ago`
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+
   return `${Math.floor(diff / 86400)}d ago`
 }
 
 function formatDate(date) {
   const d = _toDate(date)
   if (!d) return ''
+
   return d.toLocaleString(undefined, {
     month: 'short',
     day: 'numeric',
@@ -241,22 +264,30 @@ function formatDate(date) {
 
 function distanceTo(incident) {
   if (!userPos.value || !incident.location) return null
+
   const { lat: lat1, lng: lon1 } = userPos.value
   const lat2 = incident.location.latitude
   const lon2 = incident.location.longitude
+
   const R = 6371000
   const toRad = (x) => (x * Math.PI) / 180
+
   const dLat = toRad(lat2 - lat1)
   const dLon = toRad(lon2 - lon1)
+
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) ** 2
+
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
 function formatDistance(meters) {
   if (meters == null) return ''
   if (meters < 1000) return `${Math.round(meters)} m away`
+
   return `${(meters / 1000).toFixed(1)} km away`
 }
 
@@ -268,17 +299,22 @@ const acceptError = ref('')
 
 async function onAccept(incident) {
   if (acceptingId.value) return
+
   acceptingId.value = incident.id
   acceptError.value = ''
+
   try {
     await acceptIncident(incident.id, {
       uid: auth.user?.uid,
       fullName: auth.profile?.fullName || '',
     })
+
     activeFilter.value = 'mine'
   } catch (e) {
     console.error('[FeedTab] accept failed', e)
+
     acceptError.value = 'Could not accept. Try again.'
+
     setTimeout(() => (acceptError.value = ''), 3000)
   } finally {
     acceptingId.value = null
@@ -286,7 +322,7 @@ async function onAccept(incident) {
 }
 
 // ---------------------------------------------------------------------------
-// RESOLVE FLOW → auto-switch to History
+// RESOLVE FLOW → AUTO-SWITCH TO HISTORY
 // ---------------------------------------------------------------------------
 const resolvingId = ref(null)
 const resolveError = ref('')
@@ -294,6 +330,7 @@ const justResolvedId = ref(null)
 
 async function onResolve(incident) {
   if (resolvingId.value) return
+
   if (!confirm(
     'Mark this incident as responded and completed?\n\n' +
     'The admin will see it as resolved in analytics.\n' +
@@ -302,26 +339,32 @@ async function onResolve(incident) {
 
   resolvingId.value = incident.id
   resolveError.value = ''
+
   try {
     await resolveIncident(incident.id, {
       uid: auth.user?.uid,
       fullName: auth.profile?.fullName || '',
     })
 
-    // Show the "✓ Marked" state briefly on the Mine card,
-    // then jump to History with the resolved card highlighted.
     justResolvedId.value = incident.id
+
     setTimeout(() => {
       activeFilter.value = 'history'
-      // reset the history filters so the new entry is visible
-      historyDateFilter.value   = 'all'
-      historyTypeFilter.value   = 'all'
+
+      // Reset the history filters so the new entry is visible
+      historyDateFilter.value = 'all'
+      historyTypeFilter.value = 'all'
       historyStatusFilter.value = 'all'
     }, 500)
-    setTimeout(() => { justResolvedId.value = null }, 4000)
+
+    setTimeout(() => {
+      justResolvedId.value = null
+    }, 4000)
   } catch (e) {
     console.error('[FeedTab] resolve failed', e)
+
     resolveError.value = 'Could not mark as responded. Try again.'
+
     setTimeout(() => (resolveError.value = ''), 3000)
   } finally {
     resolvingId.value = null
@@ -347,7 +390,8 @@ function goToHistory() {
     <!-- Filter tabs -->
     <div class="filter-row" role="tablist">
       <button
-        type="button" role="tab"
+        type="button"
+        role="tab"
         :aria-selected="activeFilter === 'new'"
         class="filter-btn"
         :class="{ 'filter-btn--on': activeFilter === 'new' }"
@@ -360,34 +404,45 @@ function goToHistory() {
       </button>
 
       <button
-        type="button" role="tab"
+        type="button"
+        role="tab"
         :aria-selected="activeFilter === 'mine'"
         class="filter-btn"
         :class="{ 'filter-btn--on': activeFilter === 'mine' }"
         @click="activeFilter = 'mine'"
       >
         Mine
-        <span v-if="myIncidents.length" class="filter-count filter-count--green">
+        <span
+          v-if="myIncidents.length"
+          class="filter-count filter-count--green"
+        >
           {{ myIncidents.length }}
         </span>
       </button>
 
       <button
-        type="button" role="tab"
+        type="button"
+        role="tab"
         :aria-selected="activeFilter === 'history'"
         class="filter-btn"
         :class="{ 'filter-btn--on': activeFilter === 'history' }"
         @click="activeFilter = 'history'"
       >
         History
-        <span v-if="historyIncidents.length" class="filter-count filter-count--grey">
+        <span
+          v-if="historyIncidents.length"
+          class="filter-count filter-count--grey"
+        >
           {{ historyIncidents.length }}
         </span>
       </button>
     </div>
 
     <!-- History filters -->
-    <div v-if="activeFilter === 'history'" class="history-filters">
+    <div
+      v-if="activeFilter === 'history'"
+      class="history-filters"
+    >
       <label class="hf-field">
         <span class="hf-label">When</span>
         <select v-model="historyDateFilter" class="hf-select">
@@ -426,9 +481,15 @@ function goToHistory() {
     </div>
 
     <!-- Error banners -->
-    <p v-if="acceptError" class="error-banner">{{ acceptError }}</p>
-    <p v-else-if="resolveError" class="error-banner">{{ resolveError }}</p>
-    <p v-else-if="hasError" class="error-banner">{{ hasError }}</p>
+    <p v-if="acceptError" class="error-banner">
+      {{ acceptError }}
+    </p>
+    <p v-else-if="resolveError" class="error-banner">
+      {{ resolveError }}
+    </p>
+    <p v-else-if="hasError" class="error-banner">
+      {{ hasError }}
+    </p>
 
     <!-- Loading -->
     <div v-if="isLoading && !activeList.length" class="state-block">
@@ -441,6 +502,7 @@ function goToHistory() {
       <div class="state-icon" aria-hidden="true">
         {{ activeFilter === 'new' ? '📭' : activeFilter === 'mine' ? '🚑' : '📂' }}
       </div>
+
       <p class="state-title">
         {{
           activeFilter === 'new'  ? 'No pending incidents' :
@@ -450,6 +512,7 @@ function goToHistory() {
             : 'No history yet'
         }}
       </p>
+
       <p class="tiny state-text">
         {{
           activeFilter === 'new'
@@ -483,9 +546,19 @@ function goToHistory() {
             <span class="card-type-icon" aria-hidden="true">
               {{ typeIcon(inc.type) }}
             </span>
-            <span class="card-type-label">{{ typeLabel(inc.type) }}</span>
-            <span v-if="inc.type === 'emergency'" class="card-type-sos">SOS</span>
+
+            <span class="card-type-label">
+              {{ typeLabel(inc.type) }}
+            </span>
+
+            <span
+              v-if="inc.type === 'emergency'"
+              class="card-type-sos"
+            >
+              SOS
+            </span>
           </div>
+
           <span class="card-time tiny">
             {{
               activeFilter === 'history'
@@ -496,10 +569,15 @@ function goToHistory() {
         </div>
 
         <!-- Description -->
-        <p v-if="inc.description" class="card-desc">{{ inc.description }}</p>
+        <p v-if="inc.description" class="card-desc">
+          {{ inc.description }}
+        </p>
 
         <!-- Emergency audio -->
-        <div v-if="inc.type === 'emergency' && inc.audioUrl" class="card-audio-pill">
+        <div
+          v-if="inc.type === 'emergency' && inc.audioUrl"
+          class="card-audio-pill"
+        >
           <span aria-hidden="true">🎤</span>
           <span>Voice message</span>
         </div>
@@ -510,6 +588,7 @@ function goToHistory() {
             <span aria-hidden="true">📍</span>
             {{ inc.barangay }}
           </span>
+
           <span
             v-if="activeFilter !== 'history' && formatDistance(distanceTo(inc))"
             class="card-meta-item"
@@ -517,6 +596,7 @@ function goToHistory() {
             <span aria-hidden="true">🚶</span>
             {{ formatDistance(distanceTo(inc)) }}
           </span>
+
           <span
             v-if="activeFilter === 'history' && inc.respondedDurationSeconds != null"
             class="card-meta-item"
@@ -565,9 +645,15 @@ function goToHistory() {
           :disabled="resolvingId === inc.id || justResolvedId === inc.id"
           @click="onResolve(inc)"
         >
-          <template v-if="justResolvedId === inc.id">✓ Marked as responded</template>
-          <template v-else-if="resolvingId === inc.id">Saving…</template>
-          <template v-else>✓ Mark as Responded</template>
+          <template v-if="justResolvedId === inc.id">
+            ✓ Marked as responded
+          </template>
+          <template v-else-if="resolvingId === inc.id">
+            Saving…
+          </template>
+          <template v-else>
+            ✓ Mark as Responded
+          </template>
         </button>
       </li>
     </ul>
