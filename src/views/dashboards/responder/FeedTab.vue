@@ -1,12 +1,11 @@
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import MediaGallery from '@/components/MediaGallery.vue'
 import {
   useIncidents,
   acceptIncident,
   resolveIncident,
-  INCIDENT_STATUS,
   STATUS_GROUPS,
   statusLabel,
 } from '@/composables/useIncidents'
@@ -16,20 +15,22 @@ const auth = useAuthStore()
 // ---------------------------------------------------------------------------
 // FILTER
 // ---------------------------------------------------------------------------
-const activeFilter = ref('new') // 'new' | 'mine'
+const activeFilter = ref('new') // 'new' | 'mine' | 'history'
 
 // ---------------------------------------------------------------------------
 // SUBSCRIPTIONS
 // ---------------------------------------------------------------------------
+// Feed — pending incidents visible to this responder
 const {
   incidents: newIncidentsRaw,
   loading: loadingNew,
   error: errorNew,
 } = useIncidents({
   statuses: STATUS_GROUPS.OPEN,
-  scope: 'all', // Reverted to 'all'
+  scope: 'all',
 })
 
+// Mine — active incidents assigned to this responder
 const {
   incidents: myIncidents,
   loading: loadingMine,
@@ -39,34 +40,126 @@ const {
   scope: 'assignedToMe',
 })
 
+// History — resolved + cancelled incidents assigned to this responder
+const {
+  incidents: historyIncidents,
+  loading: loadingHistory,
+  error: errorHistory,
+} = useIncidents({
+  statuses: STATUS_GROUPS.DONE,
+  scope: 'assignedToMe',
+})
+
 // ---------------------------------------------------------------------------
-// FRONTEND FILTERING (The Fix)
+// NEW TAB FILTER (unchanged behavior)
 // ---------------------------------------------------------------------------
-// Only show "New" incidents if the current responder's UID is in the assigned array
 const newIncidents = computed(() => {
   if (!auth.user?.uid) return []
-  
   return newIncidentsRaw.value.filter((inc) => {
-    // Check the array (if your backend assigned multiple responders)
     if (Array.isArray(inc.assignedResponderUids)) {
       return inc.assignedResponderUids.includes(auth.user.uid)
     }
-    // Fallback: Check the single UID field (legacy schema)
     return inc.assignedResponderUid === auth.user.uid
   })
 })
 
-const activeList = computed(() =>
-  activeFilter.value === 'new' ? newIncidents.value : myIncidents.value
+// ---------------------------------------------------------------------------
+// HISTORY FILTERS (client-side)
+// ---------------------------------------------------------------------------
+const historyDateFilter   = ref('all')   // 'today' | '7d' | '30d' | 'all'
+const historyTypeFilter   = ref('all')
+const historyStatusFilter = ref('all')
+
+const HISTORY_TYPE_OPTIONS = [
+  { value: 'all',             label: 'All types' },
+  { value: 'accident',        label: '🚗 Accident' },
+  { value: 'medical',         label: '🚑 Medical' },
+  { value: 'fire',            label: '🔥 Fire' },
+  { value: 'road_hazard',     label: '⚠️ Road hazard' },
+  { value: 'emergency',       label: '🆘 Emergency' },
+  // legacy types — kept for incidents created before the type rename
+  { value: 'flat_tire',       label: '🛞 Flat tire' },
+  { value: 'battery',         label: '🔋 Dead battery' },
+  { value: 'fuel',            label: '⛽ Out of fuel' },
+  { value: 'stalled_vehicle', label: '🛑 Stalled vehicle' },
+  { value: 'minor_collision', label: '🚗 Minor crash' },
+  { value: 'major_collision', label: '💥 Major crash' },
+  { value: 'vehicle_fire',    label: '🔥 Vehicle fire' },
+]
+
+const HISTORY_STATUS_OPTIONS = [
+  { value: 'all',       label: 'All statuses' },
+  { value: 'resolved',  label: 'Resolved' },
+  { value: 'cancelled', label: 'Cancelled' },
+]
+
+function _toDate(value) {
+  if (!value) return null
+  if (value instanceof Date) return value
+  if (typeof value.toDate === 'function') return value.toDate()
+  const d = new Date(value)
+  return isNaN(d.getTime()) ? null : d
+}
+
+const historyFiltersActive = computed(() =>
+  historyDateFilter.value !== 'all' ||
+  historyTypeFilter.value !== 'all' ||
+  historyStatusFilter.value !== 'all'
 )
 
-const isLoading = computed(() =>
-  activeFilter.value === 'new' ? loadingNew.value : loadingMine.value
-)
+const filteredHistory = computed(() => {
+  const now = Date.now()
+  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0)
 
-const hasError = computed(() =>
-  activeFilter.value === 'new' ? errorNew.value : errorMine.value
-)
+  const filtered = historyIncidents.value.filter((inc) => {
+    if (historyTypeFilter.value !== 'all' && inc.type !== historyTypeFilter.value) {
+      return false
+    }
+    if (historyStatusFilter.value !== 'all' && inc.status !== historyStatusFilter.value) {
+      return false
+    }
+    if (historyDateFilter.value !== 'all') {
+      const d = _toDate(inc.resolvedAt || inc.updatedAt || inc.createdAt)
+      if (!d) return false
+      if (historyDateFilter.value === 'today') {
+        if (d.getTime() < startOfToday.getTime()) return false
+      } else if (historyDateFilter.value === '7d') {
+        if (d.getTime() < now - 7 * 86400000) return false
+      } else if (historyDateFilter.value === '30d') {
+        if (d.getTime() < now - 30 * 86400000) return false
+      }
+    }
+    return true
+  })
+
+  // Sort by most recently resolved/updated, falling back to createdAt
+  return [...filtered].sort((a, b) => {
+    const da = _toDate(a.resolvedAt || a.updatedAt || a.createdAt)?.getTime() || 0
+    const db = _toDate(b.resolvedAt || b.updatedAt || b.createdAt)?.getTime() || 0
+    return db - da
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ACTIVE LIST + LOADING / ERROR
+// ---------------------------------------------------------------------------
+const activeList = computed(() => {
+  if (activeFilter.value === 'new')     return newIncidents.value
+  if (activeFilter.value === 'mine')    return myIncidents.value
+  return filteredHistory.value
+})
+
+const isLoading = computed(() => {
+  if (activeFilter.value === 'new')     return loadingNew.value
+  if (activeFilter.value === 'mine')    return loadingMine.value
+  return loadingHistory.value
+})
+
+const hasError = computed(() => {
+  if (activeFilter.value === 'new')     return errorNew.value
+  if (activeFilter.value === 'mine')    return errorMine.value
+  return errorHistory.value
+})
 
 // ---------------------------------------------------------------------------
 // USER LOCATION
@@ -80,16 +173,12 @@ function requestLocation() {
   navigator.geolocation.getCurrentPosition(
     (pos) => {
       locating.value = false
-      userPos.value = {
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
-      }
+      userPos.value = { lat: pos.coords.latitude, lng: pos.coords.longitude }
     },
     () => { locating.value = false },
     { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
   )
 }
-
 onMounted(requestLocation)
 
 // ---------------------------------------------------------------------------
@@ -105,6 +194,9 @@ const TYPE_ICONS = {
   vehicle_fire:    '🔥',
   road_hazard:     '⚠️',
   emergency:       '🚨',
+  accident:        '🚗',
+  medical:         '🚑',
+  fire:            '🔥',
 }
 
 const TYPE_LABELS = {
@@ -117,20 +209,34 @@ const TYPE_LABELS = {
   vehicle_fire:    'Vehicle Fire',
   road_hazard:     'Road Hazard',
   emergency:       'Emergency (SOS)',
+  accident:        'Accident',
+  medical:         'Medical',
+  fire:            'Fire',
 }
 
-function typeIcon(type) { return TYPE_ICONS[type] || '❓' }
+function typeIcon(type)  { return TYPE_ICONS[type]  || '❓' }
 function typeLabel(type) { return TYPE_LABELS[type] || 'Incident' }
 
 function timeAgo(date) {
-  if (!date) return ''
-  const d = date instanceof Date ? date : new Date(date)
+  const d = _toDate(date)
+  if (!d) return ''
   const diff = Math.floor((Date.now() - d.getTime()) / 1000)
   if (diff < 30) return 'Just now'
   if (diff < 60) return `${diff}s ago`
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
   return `${Math.floor(diff / 86400)}d ago`
+}
+
+function formatDate(date) {
+  const d = _toDate(date)
+  if (!d) return ''
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function distanceTo(incident) {
@@ -145,8 +251,7 @@ function distanceTo(incident) {
   const a =
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-  return R * c
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
 function formatDistance(meters) {
@@ -165,7 +270,6 @@ async function onAccept(incident) {
   if (acceptingId.value) return
   acceptingId.value = incident.id
   acceptError.value = ''
-
   try {
     await acceptIncident(incident.id, {
       uid: auth.user?.uid,
@@ -182,7 +286,7 @@ async function onAccept(incident) {
 }
 
 // ---------------------------------------------------------------------------
-// RESOLVE FLOW  (Mark as Responded / Completed)
+// RESOLVE FLOW → auto-switch to History
 // ---------------------------------------------------------------------------
 const resolvingId = ref(null)
 const resolveError = ref('')
@@ -192,19 +296,29 @@ async function onResolve(incident) {
   if (resolvingId.value) return
   if (!confirm(
     'Mark this incident as responded and completed?\n\n' +
-    'The admin will see it as resolved in analytics.'
+    'The admin will see it as resolved in analytics.\n' +
+    'It will move to your History tab.'
   )) return
 
   resolvingId.value = incident.id
   resolveError.value = ''
-
   try {
     await resolveIncident(incident.id, {
       uid: auth.user?.uid,
       fullName: auth.profile?.fullName || '',
     })
+
+    // Show the "✓ Marked" state briefly on the Mine card,
+    // then jump to History with the resolved card highlighted.
     justResolvedId.value = incident.id
-    setTimeout(() => { justResolvedId.value = null }, 3000)
+    setTimeout(() => {
+      activeFilter.value = 'history'
+      // reset the history filters so the new entry is visible
+      historyDateFilter.value   = 'all'
+      historyTypeFilter.value   = 'all'
+      historyStatusFilter.value = 'all'
+    }, 500)
+    setTimeout(() => { justResolvedId.value = null }, 4000)
   } catch (e) {
     console.error('[FeedTab] resolve failed', e)
     resolveError.value = 'Could not mark as responded. Try again.'
@@ -214,9 +328,10 @@ async function onResolve(incident) {
   }
 }
 
-onBeforeUnmount(() => {
-  // composable handles its own cleanup
-})
+// Manual jump to History
+function goToHistory() {
+  activeFilter.value = 'history'
+}
 </script>
 
 <template>
@@ -232,8 +347,7 @@ onBeforeUnmount(() => {
     <!-- Filter tabs -->
     <div class="filter-row" role="tablist">
       <button
-        type="button"
-        role="tab"
+        type="button" role="tab"
         :aria-selected="activeFilter === 'new'"
         class="filter-btn"
         :class="{ 'filter-btn--on': activeFilter === 'new' }"
@@ -244,22 +358,71 @@ onBeforeUnmount(() => {
           {{ newIncidents.length }}
         </span>
       </button>
+
       <button
-        type="button"
-        role="tab"
+        type="button" role="tab"
         :aria-selected="activeFilter === 'mine'"
         class="filter-btn"
         :class="{ 'filter-btn--on': activeFilter === 'mine' }"
         @click="activeFilter = 'mine'"
       >
         Mine
-        <span
-          v-if="myIncidents.length"
-          class="filter-count filter-count--green"
-        >
+        <span v-if="myIncidents.length" class="filter-count filter-count--green">
           {{ myIncidents.length }}
         </span>
       </button>
+
+      <button
+        type="button" role="tab"
+        :aria-selected="activeFilter === 'history'"
+        class="filter-btn"
+        :class="{ 'filter-btn--on': activeFilter === 'history' }"
+        @click="activeFilter = 'history'"
+      >
+        History
+        <span v-if="historyIncidents.length" class="filter-count filter-count--grey">
+          {{ historyIncidents.length }}
+        </span>
+      </button>
+    </div>
+
+    <!-- History filters -->
+    <div v-if="activeFilter === 'history'" class="history-filters">
+      <label class="hf-field">
+        <span class="hf-label">When</span>
+        <select v-model="historyDateFilter" class="hf-select">
+          <option value="all">All time</option>
+          <option value="today">Today</option>
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+        </select>
+      </label>
+
+      <label class="hf-field">
+        <span class="hf-label">Type</span>
+        <select v-model="historyTypeFilter" class="hf-select">
+          <option
+            v-for="opt in HISTORY_TYPE_OPTIONS"
+            :key="opt.value"
+            :value="opt.value"
+          >
+            {{ opt.label }}
+          </option>
+        </select>
+      </label>
+
+      <label class="hf-field">
+        <span class="hf-label">Status</span>
+        <select v-model="historyStatusFilter" class="hf-select">
+          <option
+            v-for="opt in HISTORY_STATUS_OPTIONS"
+            :key="opt.value"
+            :value="opt.value"
+          >
+            {{ opt.label }}
+          </option>
+        </select>
+      </label>
     </div>
 
     <!-- Error banners -->
@@ -276,20 +439,26 @@ onBeforeUnmount(() => {
     <!-- Empty state -->
     <div v-else-if="!activeList.length" class="state-block">
       <div class="state-icon" aria-hidden="true">
-        {{ activeFilter === 'new' ? '📭' : '🚑' }}
+        {{ activeFilter === 'new' ? '📭' : activeFilter === 'mine' ? '🚑' : '📂' }}
       </div>
       <p class="state-title">
         {{
-          activeFilter === 'new'
-            ? 'No pending incidents'
-            : 'No active incidents'
+          activeFilter === 'new'  ? 'No pending incidents' :
+          activeFilter === 'mine' ? 'No active incidents' :
+          historyFiltersActive
+            ? 'No matches for current filters'
+            : 'No history yet'
         }}
       </p>
       <p class="tiny state-text">
         {{
           activeFilter === 'new'
             ? 'New requests will appear here in real time.'
-            : 'Accept a request from the New tab to get started.'
+            : activeFilter === 'mine'
+            ? 'Accept a request from the New tab to get started.'
+            : historyFiltersActive
+            ? 'Try widening the date range or clearing the filters.'
+            : 'Responded and cancelled incidents will appear here.'
         }}
       </p>
     </div>
@@ -302,7 +471,9 @@ onBeforeUnmount(() => {
         class="card"
         :class="{
           'card--mine': activeFilter === 'mine',
+          'card--history': activeFilter === 'history',
           'card--resolved': justResolvedId === inc.id,
+          'card--cancelled': inc.status === 'cancelled',
           'card--emergency': inc.type === 'emergency',
         }"
       >
@@ -315,33 +486,47 @@ onBeforeUnmount(() => {
             <span class="card-type-label">{{ typeLabel(inc.type) }}</span>
             <span v-if="inc.type === 'emergency'" class="card-type-sos">SOS</span>
           </div>
-          <span class="card-time tiny">{{ timeAgo(inc.createdAt) }}</span>
+          <span class="card-time tiny">
+            {{
+              activeFilter === 'history'
+                ? formatDate(inc.resolvedAt || inc.updatedAt || inc.createdAt)
+                : timeAgo(inc.createdAt)
+            }}
+          </span>
         </div>
 
         <!-- Description -->
-        <p v-if="inc.description" class="card-desc">
-          {{ inc.description }}
-        </p>
+        <p v-if="inc.description" class="card-desc">{{ inc.description }}</p>
 
-        <!-- Emergency audio indicator -->
+        <!-- Emergency audio -->
         <div v-if="inc.type === 'emergency' && inc.audioUrl" class="card-audio-pill">
           <span aria-hidden="true">🎤</span>
           <span>Voice message</span>
         </div>
 
-        <!-- Meta row -->
+        <!-- Meta -->
         <div class="card-meta">
           <span v-if="inc.barangay" class="card-meta-item">
             <span aria-hidden="true">📍</span>
             {{ inc.barangay }}
           </span>
-          <span v-if="formatDistance(distanceTo(inc))" class="card-meta-item">
+          <span
+            v-if="activeFilter !== 'history' && formatDistance(distanceTo(inc))"
+            class="card-meta-item"
+          >
             <span aria-hidden="true">🚶</span>
             {{ formatDistance(distanceTo(inc)) }}
           </span>
+          <span
+            v-if="activeFilter === 'history' && inc.respondedDurationSeconds != null"
+            class="card-meta-item"
+          >
+            <span aria-hidden="true">⏱</span>
+            {{ Math.round(inc.respondedDurationSeconds / 60) }} min response
+          </span>
         </div>
 
-        <!-- Media thumbnails -->
+        <!-- Media -->
         <MediaGallery
           v-if="inc.photoUrls?.length || inc.videoUrl"
           :photo-urls="inc.photoUrls || []"
@@ -350,19 +535,19 @@ onBeforeUnmount(() => {
           class="card-media"
         />
 
-        <!-- Citizen name -->
+        <!-- Citizen -->
         <p v-if="inc.citizenName" class="card-citizen tiny">
           Reported by {{ inc.citizenName }}
         </p>
 
-        <!-- Status chip (Mine tab) -->
-        <div v-if="activeFilter === 'mine'" class="card-status">
+        <!-- Status chip (Mine + History) -->
+        <div v-if="activeFilter !== 'new'" class="card-status">
           <span class="status-chip" :class="`status-chip--${inc.status}`">
             {{ statusLabel(inc.status) }}
           </span>
         </div>
 
-        <!-- Accept button (New tab) -->
+        <!-- Accept button (New) -->
         <button
           v-if="activeFilter === 'new'"
           class="btn btn--accept"
@@ -372,7 +557,7 @@ onBeforeUnmount(() => {
           {{ acceptingId === inc.id ? 'Accepting…' : 'Accept' }}
         </button>
 
-        <!-- Resolve button (Mine tab) -->
+        <!-- Resolve button (Mine) -->
         <button
           v-if="activeFilter === 'mine'"
           class="btn btn--resolve"
@@ -380,15 +565,9 @@ onBeforeUnmount(() => {
           :disabled="resolvingId === inc.id || justResolvedId === inc.id"
           @click="onResolve(inc)"
         >
-          <template v-if="justResolvedId === inc.id">
-            ✓ Marked as responded
-          </template>
-          <template v-else-if="resolvingId === inc.id">
-            Saving…
-          </template>
-          <template v-else>
-            ✓ Mark as Responded
-          </template>
+          <template v-if="justResolvedId === inc.id">✓ Marked as responded</template>
+          <template v-else-if="resolvingId === inc.id">Saving…</template>
+          <template v-else>✓ Mark as Responded</template>
         </button>
       </li>
     </ul>
@@ -420,16 +599,16 @@ onBeforeUnmount(() => {
 .head .h1 { font-size: 1.5rem; }
 .head .muted { margin-top: 4px; line-height: 1.5; }
 
-/* Filter row */
+/* Filter row — 3 columns */
 .filter-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 4px;
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 4px;
-  margin-bottom: 18px;
+  margin-bottom: 12px;
 }
 
 .filter-btn {
@@ -443,7 +622,7 @@ onBeforeUnmount(() => {
   background: transparent;
   color: var(--text-muted);
   font-weight: 650;
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -467,6 +646,41 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 .filter-count--green { background: var(--accent); }
+.filter-count--grey  { background: #6b7280; }
+
+/* History filters */
+.history-filters {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.hf-field { display: flex; flex-direction: column; gap: 4px; }
+.hf-label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.hf-select {
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.8125rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+.hf-select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 
 /* Error banner */
 .error-banner {
@@ -488,7 +702,6 @@ onBeforeUnmount(() => {
   text-align: center;
   margin-top: 8px;
 }
-
 .state-spinner {
   width: 28px;
   height: 28px;
@@ -533,18 +746,22 @@ onBeforeUnmount(() => {
   animation: card-in 0.24s ease;
   transition: all 0.2s ease;
 }
-
 .card--mine {
   border-color: rgba(47, 158, 115, 0.35);
   background:
     radial-gradient(90% 100% at 50% 0%, var(--accent-soft) 0%, transparent 70%),
     var(--bg-elev);
 }
-
+.card--history {
+  background: var(--bg-elev);
+  opacity: 0.94;
+}
+.card--cancelled {
+  border-color: rgba(239, 68, 68, 0.25);
+}
 .card--emergency {
   border-color: rgba(230, 57, 70, 0.4);
 }
-
 .card--resolved {
   border-color: rgba(47, 158, 115, 0.7);
   background:
@@ -552,7 +769,6 @@ onBeforeUnmount(() => {
     var(--bg-elev);
   box-shadow: 0 0 20px rgba(47, 158, 115, 0.3);
 }
-
 @keyframes card-in {
   from { transform: translateY(6px); opacity: 0; }
   to   { transform: translateY(0); opacity: 1; }
@@ -591,7 +807,10 @@ onBeforeUnmount(() => {
 }
 @keyframes sos-blink { from { opacity: 1; } to { opacity: 0.6; } }
 
-.card-time { flex-shrink: 0; white-space: nowrap; }
+.card-time {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
 
 /* Description */
 .card-desc {
@@ -621,7 +840,7 @@ onBeforeUnmount(() => {
   margin-bottom: 10px;
 }
 
-/* Meta row */
+/* Meta */
 .card-meta {
   display: flex;
   flex-wrap: wrap;
@@ -650,9 +869,11 @@ onBeforeUnmount(() => {
   padding: 4px 10px;
   border-radius: 6px;
 }
-.status-chip--accepted { color: #f59e0b; background: rgba(245, 158, 11, 0.14); }
-.status-chip--en_route { color: #3b82f6; background: rgba(59, 130, 246, 0.14); }
-.status-chip--on_scene { color: var(--accent); background: var(--accent-soft); }
+.status-chip--accepted  { color: #f59e0b; background: rgba(245, 158, 11, 0.14); }
+.status-chip--en_route  { color: #3b82f6; background: rgba(59, 130, 246, 0.14); }
+.status-chip--on_scene  { color: var(--accent); background: var(--accent-soft); }
+.status-chip--resolved  { color: var(--accent); background: var(--accent-soft); }
+.status-chip--cancelled { color: #ef4444; background: rgba(239, 68, 68, 0.14); }
 
 /* Accept button */
 .btn--accept {
@@ -664,6 +885,14 @@ onBeforeUnmount(() => {
   box-shadow: 0 4px 12px rgba(47, 158, 115, 0.35);
   margin-top: 4px;
   width: 100%;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  font-family: inherit;
 }
 .btn--accept:active:not(:disabled) { transform: scale(0.97); }
 
@@ -689,7 +918,6 @@ onBeforeUnmount(() => {
 }
 .btn--resolve:active:not(:disabled) { transform: scale(0.97); }
 .btn--resolve:disabled { opacity: 0.7; cursor: not-allowed; }
-
 .btn--resolve-done {
   background: linear-gradient(160deg, #3cb886 0%, #2f9e73 55%, #267a58 100%);
   box-shadow: 0 4px 12px rgba(47, 158, 115, 0.5);
@@ -712,4 +940,10 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .link:disabled { opacity: 0.6; }
+
+/* Mobile */
+@media (max-width: 480px) {
+  .filter-btn { font-size: 0.8125rem; gap: 4px; padding: 0 6px; }
+  .history-filters { grid-template-columns: 1fr; }
+}
 </style>
