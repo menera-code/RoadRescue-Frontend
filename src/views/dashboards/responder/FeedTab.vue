@@ -7,6 +7,7 @@ import {
 } from '@/utils/incidentTypes'
 import { useAuthStore } from '@/stores/auth'
 import MediaGallery from '@/components/MediaGallery.vue'
+import AiAssessment from '@/components/AiAssessment.vue'
 import {
   useIncidents,
   acceptIncident,
@@ -615,6 +616,29 @@ function goToHistory() {
           class="card-media"
         />
 
+        <!-- Gemini AI incident assessment -->
+        <AiAssessment
+          v-if="inc.ml"
+          :ml="inc.ml"
+          :reported-type="inc.type"
+          audience="responder"
+          class="card-ai-assessment"
+        />
+
+        <!-- AI processing status when no assessment is stored yet -->
+        <div
+          v-else-if="activeFilter !== 'history' && inc.status !== 'cancelled'"
+          class="ai-pending"
+        >
+          <span class="ai-pending-icon" aria-hidden="true">🤖</span>
+          <div>
+            <p class="ai-pending-title">AI assessment not available yet</p>
+            <p class="ai-pending-text">
+              This incident may still be waiting for AI processing.
+            </p>
+          </div>
+        </div>
+
         <!-- Citizen -->
         <p v-if="inc.citizenName" class="card-citizen tiny">
           Reported by {{ inc.citizenName }}
@@ -943,6 +967,37 @@ function goToHistory() {
 
 .card-media { margin-bottom: 10px; }
 .card-citizen { margin-bottom: 12px; }
+
+/* AI assessment */
+.card-ai-assessment {
+  display: block;
+  margin: 12px 0;
+}
+.ai-pending {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-input);
+}
+.ai-pending-icon {
+  font-size: 1.25rem;
+  flex-shrink: 0;
+}
+.ai-pending-title {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+.ai-pending-text {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
 
 /* Status chip */
 .card-status { margin-bottom: 12px; }
