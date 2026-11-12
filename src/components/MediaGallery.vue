@@ -1,4 +1,3 @@
-
 <script setup>
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 
@@ -32,8 +31,29 @@ const videoErrorMessage = ref('')
 const videoErrorCode = ref(null)
 const videoStatus = ref('idle')
 
-const videoPreload = computed(() => {
-  return props.mode === 'compact' ? 'none' : 'metadata'
+// Always load at least metadata.
+// "none" makes iOS Safari refuse to start playback on first tap
+// and shows a blank box with no thumbnail.
+const videoPreload = 'metadata'
+
+// Best-effort MIME hint for <source type>. Safari sniffs more
+// reliably when the type attribute is present.
+const videoMimeType = computed(() => {
+  if (!props.videoUrl) return ''
+
+  const clean = props.videoUrl.split('?')[0].split('#')[0]
+  const ext = clean.split('.').pop()?.toLowerCase() || ''
+
+  const map = {
+    mp4: 'video/mp4',
+    m4v: 'video/x-m4v',
+    mov: 'video/quicktime',
+    webm: 'video/webm',
+    ogv: 'video/ogg',
+    '3gp': 'video/3gpp',
+  }
+
+  return map[ext] || ''
 })
 
 // Reset video state when URL changes
@@ -44,15 +64,17 @@ watch(
 
     videoRetryKey.value++
 
-    if (props.videoUrl && props.mode === 'full') {
+    if (props.videoUrl) {
       videoLoading.value = true
       videoStatus.value = 'loading'
     }
 
     await nextTick()
 
-    // Intentionally do not call video.load().
-    // Let the browser initialize the newly rendered video.
+    // Force the freshly-rendered element to start fetching.
+    if (videoElement.value && props.videoUrl) {
+      videoElement.value.load()
+    }
   },
   { immediate: true }
 )
@@ -71,6 +93,10 @@ watch(
     }
 
     await nextTick()
+
+    if (videoElement.value && props.videoUrl) {
+      videoElement.value.load()
+    }
   }
 )
 
@@ -152,16 +178,57 @@ function onVideoEnded() {
   videoStatus.value = 'ended'
 }
 
-// Capture actual browser errors
-function onVideoError(event) {
+// Capture actual browser errors AND inspect the response Content-Type.
+// The stored Content-Type is the #1 cause of "format not supported".
+async function onVideoError(event) {
   const video = event.target
   const mediaError = video?.error
   const code = mediaError?.code ?? null
+
+  let responseContentType = null
+
+  if (video?.currentSrc && /^https?:/i.test(video.currentSrc)) {
+    try {
+      const res = await fetch(video.currentSrc, { method: 'HEAD' })
+      responseContentType = res.headers.get('content-type') || ''
+
+      console.warn(
+        '[RoadRescue Video] Response Content-Type:',
+        responseContentType,
+        '| error code:',
+        code
+      )
+
+      // If the server is serving a video that doesn't match its
+      // declared Content-Type, most browsers will fail with code 3/4.
+      if (
+        code === 4 &&
+        responseContentType &&
+        !responseContentType.startsWith('video/')
+      ) {
+        console.error(
+          '[RoadRescue Video] ROOT CAUSE: Content-Type is not a video type. ' +
+          'The file was probably uploaded with the wrong MIME type ' +
+          'by the old useMediaUpload. Re-upload the video.'
+        )
+      }
+    } catch (fetchErr) {
+      // HEAD failed — usually because the bucket has no CORS policy.
+      // This does NOT affect <video> playback (media requests don't
+      // need CORS unless crossorigin is set).
+      console.warn(
+        '[RoadRescue Video] Could not inspect Content-Type ' +
+        '(bucket CORS not configured):',
+        fetchErr?.message || fetchErr
+      )
+    }
+  }
 
   const details = {
     code,
     message: mediaError?.message,
     currentSrc: video?.currentSrc,
+    responseContentType,
     networkState: video?.networkState,
     readyState: video?.readyState,
     duration: video?.duration,
@@ -206,7 +273,8 @@ function onVideoError(event) {
 
     case 4:
       videoErrorMessage.value =
-        'The video format or source is not supported by this browser.'
+        'The video format is not supported by this browser. ' +
+        'Try opening it in a different browser.'
 
       break
 
@@ -217,16 +285,22 @@ function onVideoError(event) {
 }
 
 // RETRY
+// Re-key the element AND force load(). Re-keying alone doesn't
+// always re-fetch, especially after a network/decode error that
+// got cached.
 async function retryVideo() {
   resetVideoState()
 
   videoLoading.value = true
   videoStatus.value = 'loading'
 
-  // Recreate the video element instead of forcing load().
   videoRetryKey.value++
 
   await nextTick()
+
+  if (videoElement.value) {
+    videoElement.value.load()
+  }
 
   console.log('[RoadRescue Video] Retry requested')
 }
@@ -326,7 +400,6 @@ onBeforeUnmount(() => {
         :key="`${props.videoUrl}-${videoRetryKey}`"
         ref="videoElement"
         class="gallery__player"
-        :src="props.videoUrl"
         :preload="videoPreload"
         controls
         playsinline
@@ -342,6 +415,10 @@ onBeforeUnmount(() => {
         @ended="onVideoEnded"
         @error="onVideoError"
       >
+        <source
+          :src="props.videoUrl"
+          :type="videoMimeType || undefined"
+        />
         Your browser does not support HTML5 video.
       </video>
 
