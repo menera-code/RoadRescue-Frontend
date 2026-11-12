@@ -1,6 +1,6 @@
 
 <script setup>
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 
 const props = defineProps({
   photoUrls: {
@@ -25,26 +25,31 @@ const videoRetryKey = ref(0)
 const videoError = ref(false)
 const videoLoading = ref(false)
 const videoErrorMessage = ref('')
+const videoReady = ref(false)
 
 const isLightboxOpen = computed(() => lightboxIndex.value >= 0)
 
-// Compact mode avoids loading every video in an incident feed.
 const videoPreload = computed(() =>
   props.mode === 'compact' ? 'none' : 'metadata'
 )
 
-// Reset video state whenever the URL changes.
+// Reset video state
+function resetVideoState() {
+  videoError.value = false
+  videoErrorMessage.value = ''
+  videoLoading.value = false
+  videoReady.value = false
+}
+
+// Watch URL changes
 watch(
   () => props.videoUrl,
   async () => {
-    videoError.value = false
-    videoErrorMessage.value = ''
-    videoLoading.value = false
+    resetVideoState()
     videoRetryKey.value++
 
     await nextTick()
 
-    // Do not force-load videos in compact mode.
     if (props.mode === 'full' && videoElement.value) {
       videoLoading.value = true
       videoElement.value.load()
@@ -53,24 +58,23 @@ watch(
   { immediate: true }
 )
 
-// Reset the video if the display mode changes.
+// Watch display mode changes
 watch(
   () => props.mode,
-  async () => {
-    videoError.value = false
-    videoErrorMessage.value = ''
-    videoLoading.value = false
+  async (newMode) => {
+    resetVideoState()
     videoRetryKey.value++
 
     await nextTick()
 
-    if (props.mode === 'full' && videoElement.value) {
+    if (newMode === 'full' && videoElement.value) {
       videoLoading.value = true
       videoElement.value.load()
     }
   }
 )
 
+// PHOTO LIGHTBOX
 function openLightbox(index) {
   lightboxIndex.value = index
 }
@@ -94,7 +98,7 @@ function prevPhoto() {
     props.photoUrls.length
 }
 
-// Video events
+// VIDEO EVENTS
 function onVideoLoadStart() {
   videoLoading.value = true
   videoError.value = false
@@ -103,6 +107,7 @@ function onVideoLoadStart() {
 function onVideoLoaded() {
   videoLoading.value = false
   videoError.value = false
+  videoReady.value = true
   videoErrorMessage.value = ''
 }
 
@@ -113,63 +118,71 @@ function onVideoWaiting() {
 function onVideoPlaying() {
   videoLoading.value = false
   videoError.value = false
+  videoReady.value = true
+}
+
+function onVideoCanPlay() {
+  videoLoading.value = false
+  videoReady.value = true
+  videoError.value = false
+  videoErrorMessage.value = ''
 }
 
 function onVideoError(event) {
   const video = event.target
   const mediaError = video?.error
+  const code = mediaError?.code
 
-  const errorDetails = {
-    code: mediaError?.code,
+  console.error('[MediaGallery] Video playback error:', {
+    code,
     message: mediaError?.message,
     currentSrc: video?.currentSrc,
     networkState: video?.networkState,
     readyState: video?.readyState,
+    duration: video?.duration,
     mode: props.mode,
-  }
-
-  console.error(
-    '[MediaGallery] Video playback error:',
-    errorDetails
-  )
+    userAgent: navigator.userAgent,
+    standalone:
+      window.matchMedia('(display-mode: standalone)').matches ||
+      window.navigator.standalone === true,
+  })
 
   videoLoading.value = false
 
-  // Code 1 means playback was aborted.
-  // Mobile browsers can abort metadata requests normally.
-  // Do not display a permanent error for this event.
-  if (mediaError?.code === 1) {
+  // Code 1: Playback was aborted
+  if (code === 1) {
+    console.warn('[MediaGallery] Video loading was aborted.')
     return
   }
 
   videoError.value = true
+  videoReady.value = false
 
-  switch (mediaError?.code) {
+  switch (code) {
     case 2:
       videoErrorMessage.value =
-        'A network error interrupted the video. Please check your connection.'
+        'A network error interrupted the video. Check your connection and try again.'
       break
 
     case 3:
       videoErrorMessage.value =
-        'The video could not be decoded by this browser.'
+        'The browser encountered a problem decoding this video.'
       break
 
     case 4:
       videoErrorMessage.value =
-        'This video format or source is not supported by your browser.'
+        'The browser cannot play this video source or format.'
       break
 
     default:
       videoErrorMessage.value =
-        'The video could not be loaded. Please try again.'
+        `Playback failed. Browser error code: ${code ?? 'unknown'}.`
   }
 }
 
-// Retry playback without uploading the video again.
+// RETRY VIDEO
 async function retryVideo() {
-  videoError.value = false
-  videoErrorMessage.value = ''
+  resetVideoState()
   videoLoading.value = true
 
   videoRetryKey.value++
@@ -180,6 +193,26 @@ async function retryVideo() {
     videoElement.value.load()
   }
 }
+
+// Open original Firebase video URL
+function openOriginalVideo() {
+  if (!props.videoUrl) return
+
+  window.open(
+    props.videoUrl,
+    '_blank',
+    'noopener,noreferrer'
+  )
+}
+
+// Clean up
+onBeforeUnmount(() => {
+  if (videoElement.value) {
+    videoElement.value.pause()
+    videoElement.value.removeAttribute('src')
+    videoElement.value.load()
+  }
+})
 </script>
 
 <template>
@@ -230,9 +263,11 @@ async function retryVideo() {
         controls
         playsinline
         webkit-playsinline
+        x-webkit-airplay="allow"
+        controlslist="nodownload"
         @loadstart="onVideoLoadStart"
         @loadedmetadata="onVideoLoaded"
-        @canplay="onVideoLoaded"
+        @canplay="onVideoCanPlay"
         @playing="onVideoPlaying"
         @waiting="onVideoWaiting"
         @error="onVideoError"
@@ -261,6 +296,14 @@ async function retryVideo() {
           @click="retryVideo"
         >
           ↻ Retry video
+        </button>
+
+        <button
+          type="button"
+          class="video-open-original"
+          @click="openOriginalVideo"
+        >
+          Open video directly
         </button>
       </div>
     </div>
@@ -364,6 +407,8 @@ async function retryVideo() {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  width: 100%;
+  min-width: 0;
 }
 
 /* PHOTOS */
@@ -497,80 +542,83 @@ async function retryVideo() {
 
 .video-error-text {
   font-size: 0.8rem;
+  color: #d1d5db;
   line-height: 1.5;
-  color: #aaa;
-  max-width: 300px;
-  margin: 0 auto 14px;
+  margin-bottom: 16px;
 }
 
 .video-retry {
-  padding: 9px 16px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  display: block;
+  margin: 0 auto;
+  padding: 10px 20px;
+  border: none;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
-  font-weight: 650;
+  background: #2563eb;
+  color: white;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.video-open-original {
+  display: block;
+  margin: 12px auto 0;
+  padding: 6px;
+  border: none;
+  background: transparent;
+  color: #93c5fd;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: underline;
   cursor: pointer;
 }
 
 /* LIGHTBOX */
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.2s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-</style>
-
-<!-- TELEPORTED LIGHTBOX STYLES -->
-<style>
 .lightbox {
   position: fixed;
   inset: 0;
-  z-index: 2000;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: rgba(0, 0, 0, 0.96);
-  display: grid;
-  place-items: center;
   padding: 20px;
 }
 
 .lightbox__img {
   max-width: 100%;
-  max-height: calc(100dvh - 100px);
+  max-height: 85vh;
   object-fit: contain;
-  border-radius: 12px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
-}
-
-.lightbox__close,
-.lightbox__nav {
-  position: absolute;
-  display: grid;
-  place-items: center;
-  border: none;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(10px);
-  cursor: pointer;
+  user-select: none;
 }
 
 .lightbox__close {
-  top: calc(env(safe-area-inset-top, 0px) + 16px);
-  right: 16px;
-  width: 44px;
-  height: 44px;
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 42px;
+  height: 42px;
+  border: none;
   border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  cursor: pointer;
 }
 
 .lightbox__nav {
+  position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  width: 46px;
-  height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: none;
   border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  cursor: pointer;
 }
 
 .lightbox__nav--prev {
@@ -583,14 +631,28 @@ async function retryVideo() {
 
 .lightbox__counter {
   position: absolute;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 6px 14px;
-  border-radius: 99px;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.12);
-  font-size: 0.8125rem;
-  font-weight: 600;
+  bottom: 20px;
+  color: white;
+  font-size: 0.85rem;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+@media (max-width: 480px) {
+  .gallery__video video {
+    max-height: 260px;
+  }
+
+  .gallery--full .gallery__video video {
+    max-height: 320px;
+  }
 }
 </style>
