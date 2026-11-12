@@ -243,24 +243,6 @@ async function testNotification() {
           >
             🔔 Enable Push
           </button>
-          <button
-            @click="testNotification"
-            style="
-              background: #333;
-              color: #fff;
-              border: none;
-              padding: 8px 16px;
-              border-radius: var(--radius);
-              font-weight: 600;
-              font-size: 0.8125rem;
-              cursor: pointer;
-              transition: opacity 0.2s;
-            "
-            onmouseover="this.style.opacity='0.8'"
-            onmouseout="this.style.opacity='1'"
-          >
-            Test Alert
-          </button>
         </div>
       </div>
     </div>
