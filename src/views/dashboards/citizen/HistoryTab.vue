@@ -3,12 +3,13 @@
 import { ref, computed } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useIncidents } from '@/composables/useIncidents'
+import MediaGallery from '@/components/MediaGallery.vue'
 import AiAssessment from '@/components/AiAssessment.vue'
 
 const auth = useAuthStore()
 
 // ---------------------------------------------------------------------------
-// Subscribe to my incidents (created by me)
+// SUBSCRIBE TO MY INCIDENTS
 // ---------------------------------------------------------------------------
 const {
   incidents,
@@ -36,11 +37,19 @@ const filtered = computed(() => {
 
   if (activeFilter.value === 'active') {
     return incidents.value.filter((i) =>
-      ['unverified', 'pending', 'accepted', 'en_route', 'on_scene'].includes(i.status)
+      [
+        'unverified',
+        'pending',
+        'accepted',
+        'en_route',
+        'on_scene',
+      ].includes(i.status)
     )
   }
 
-  return incidents.value.filter((i) => i.status === activeFilter.value)
+  return incidents.value.filter(
+    (i) => i.status === activeFilter.value
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -70,12 +79,12 @@ const TYPE_LABELS = {
   other: 'Other',
 }
 
-function typeIcon(t) {
-  return TYPE_ICONS[t] || '❓'
+function typeIcon(type) {
+  return TYPE_ICONS[type] || '❓'
 }
 
-function typeLabel(t) {
-  return TYPE_LABELS[t] || 'Incident'
+function typeLabel(type) {
+  return TYPE_LABELS[type] || 'Incident'
 }
 
 function statusLabel(status) {
@@ -93,30 +102,59 @@ function statusLabel(status) {
 function statusTone(status) {
   if (status === 'unverified') return 'unverified'
   if (status === 'pending') return 'pending'
-  if (['accepted', 'en_route', 'on_scene'].includes(status)) return 'active'
+
+  if (
+    ['accepted', 'en_route', 'on_scene'].includes(status)
+  ) {
+    return 'active'
+  }
+
   if (status === 'resolved') return 'resolved'
   if (status === 'cancelled') return 'cancelled'
+
   return 'muted'
 }
 
-function formatDate(ts) {
-  if (!ts) return ''
+// ---------------------------------------------------------------------------
+// DATE HELPERS
+// ---------------------------------------------------------------------------
+function toDate(value) {
+  if (!value) return null
 
-  const d = ts instanceof Date ? ts : new Date(ts)
+  if (value instanceof Date) return value
 
-  return d.toLocaleDateString('en-PH', {
+  if (typeof value.toDate === 'function') {
+    return value.toDate()
+  }
+
+  if (
+    typeof value === 'object' &&
+    typeof value.seconds === 'number'
+  ) {
+    return new Date(value.seconds * 1000)
+  }
+
+  const date = new Date(value)
+
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function formatDate(value) {
+  const date = toDate(value)
+  if (!date) return ''
+
+  return date.toLocaleDateString('en-PH', {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
   })
 }
 
-function formatTime(ts) {
-  if (!ts) return ''
+function formatTime(value) {
+  const date = toDate(value)
+  if (!date) return ''
 
-  const d = ts instanceof Date ? ts : new Date(ts)
-
-  return d.toLocaleTimeString('en-PH', {
+  return date.toLocaleTimeString('en-PH', {
     hour: 'numeric',
     minute: '2-digit',
   })
@@ -128,63 +166,90 @@ function formatTime(ts) {
 const expandedId = ref(null)
 
 function toggle(id) {
-  expandedId.value = expandedId.value === id ? null : id
+  expandedId.value =
+    expandedId.value === id ? null : id
 }
 </script>
 
 <template>
   <section class="history-tab">
+
+    <!-- HEADER -->
     <header class="head">
       <h1 class="h1">My Reports</h1>
+
       <p class="muted">
         Incidents you've reported and their current status.
       </p>
     </header>
 
-    <!-- Filter chips -->
-    <div class="chips" role="tablist" aria-label="Filter incidents">
+    <!-- FILTER CHIPS -->
+    <div
+      class="chips"
+      role="tablist"
+      aria-label="Filter incidents"
+    >
       <button
-        v-for="f in FILTERS"
-        :key="f.key"
+        v-for="filter in FILTERS"
+        :key="filter.key"
         type="button"
         role="tab"
-        :aria-selected="activeFilter === f.key"
+        :aria-selected="activeFilter === filter.key"
         class="chip"
-        :class="{ 'chip--on': activeFilter === f.key }"
-        @click="activeFilter = f.key"
+        :class="{
+          'chip--on': activeFilter === filter.key
+        }"
+        @click="activeFilter = filter.key"
       >
-        {{ f.label }}
+        {{ filter.label }}
 
-        <span v-if="f.key === 'all' && incidents.length" class="chip-count">
+        <span
+          v-if="filter.key === 'all' && incidents.length"
+          class="chip-count"
+        >
           {{ incidents.length }}
         </span>
       </button>
     </div>
 
-    <!-- Loading -->
-    <div v-if="loading && !incidents.length" class="state-block">
+    <!-- LOADING -->
+    <div
+      v-if="loading && !incidents.length"
+      class="state-block"
+    >
       <div class="state-spinner" aria-hidden="true" />
       <p class="tiny">Loading your reports…</p>
     </div>
 
-    <!-- Error -->
-    <div v-else-if="error" class="state-block state-block--error">
+    <!-- ERROR -->
+    <div
+      v-else-if="error"
+      class="state-block state-block--error"
+    >
       <p class="tiny">{{ error }}</p>
     </div>
 
-    <!-- Empty state -->
-    <div v-else-if="!filtered.length" class="state-block">
+    <!-- EMPTY STATE -->
+    <div
+      v-else-if="!filtered.length"
+      class="state-block"
+    >
       <div class="state-icon" aria-hidden="true">
         {{ incidents.length === 0 ? '📋' : '🔍' }}
       </div>
 
       <p class="state-title">
-        {{ incidents.length === 0 ? 'No reports yet' : 'Nothing to show' }}
+        {{
+          incidents.length === 0
+            ? 'No reports yet'
+            : 'Nothing to show'
+        }}
       </p>
 
       <p class="tiny state-text">
         <template v-if="incidents.length === 0">
-          When you submit a report, it'll appear here with live status updates.
+          When you submit a report, it'll appear here with
+          live status updates.
         </template>
 
         <template v-else>
@@ -193,15 +258,18 @@ function toggle(id) {
       </p>
     </div>
 
-    <!-- List -->
+    <!-- INCIDENT LIST -->
     <ul v-else class="list">
       <li
         v-for="inc in filtered"
         :key="inc.id"
         class="card"
-        :class="{ 'card--open': expandedId === inc.id }"
+        :class="{
+          'card--open': expandedId === inc.id
+        }"
       >
-        <!-- Card head -->
+
+        <!-- CARD HEADER -->
         <button
           type="button"
           class="card-head"
@@ -213,6 +281,7 @@ function toggle(id) {
           </span>
 
           <span class="card-main">
+
             <span class="card-title-line">
               <span class="card-title">
                 {{ typeLabel(inc.type) }}
@@ -227,20 +296,31 @@ function toggle(id) {
             </span>
 
             <span class="card-meta">
-              {{ formatDate(inc.createdAt) }} · {{ formatTime(inc.createdAt) }}
+              {{ formatDate(inc.createdAt) }}
+              ·
+              {{ formatTime(inc.createdAt) }}
 
               <template v-if="inc.barangay">
                 · {{ inc.barangay }}
               </template>
             </span>
 
-            <span v-if="inc.description" class="card-desc">
+            <span
+              v-if="inc.description"
+              class="card-desc"
+            >
               {{ inc.description }}
             </span>
+
           </span>
 
           <span class="card-chev" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              width="16"
+              height="16"
+            >
               <path
                 d="m6 9 6 6 6-6"
                 stroke="currentColor"
@@ -252,34 +332,27 @@ function toggle(id) {
           </span>
         </button>
 
-        <!-- Expanded details -->
-        <div v-if="expandedId === inc.id" class="card-body">
+        <!-- EXPANDED DETAILS -->
+        <div
+          v-if="expandedId === inc.id"
+          class="card-body"
+        >
 
-          <!-- Media thumbnails -->
-          <div
+          <!-- INCIDENT MEDIA GALLERY -->
+          <MediaGallery
             v-if="inc.photoUrls?.length || inc.videoUrl"
-            class="media-row"
-          >
-            <template v-if="inc.photoUrls?.length">
-              <img
-                v-for="(url, i) in inc.photoUrls.slice(0, 3)"
-                :key="i"
-                :src="url"
-                alt="Incident evidence"
-                class="media-thumb"
-                loading="lazy"
-              />
-            </template>
+            :photo-urls="inc.photoUrls || []"
+            :video-url="inc.videoUrl || null"
+            mode="full"
+            class="incident-media"
+          />
 
-            <span v-if="inc.videoUrl" class="video-pill">
-              📹 Video
-            </span>
-          </div>
-
-          <!-- Detail grid -->
+          <!-- INCIDENT DETAILS -->
           <div class="detail-grid">
+
             <div class="detail-block">
               <p class="detail-label">Report ID</p>
+
               <p class="detail-value detail-value--mono">
                 {{ (inc.id || '').slice(0, 8).toUpperCase() }}
               </p>
@@ -290,24 +363,29 @@ function toggle(id) {
               class="detail-block"
             >
               <p class="detail-label">Responder</p>
+
               <p class="detail-value">
-                {{ inc.assignedResponderName || inc.responderName }}
+                {{
+                  inc.assignedResponderName ||
+                  inc.responderName
+                }}
               </p>
             </div>
 
-            <div v-if="inc.responseTimeSeconds" class="detail-block">
+            <div
+              v-if="inc.responseTimeSeconds != null"
+              class="detail-block"
+            >
               <p class="detail-label">Acknowledged in</p>
+
               <p class="detail-value">
                 {{ inc.responseTimeSeconds }}s
               </p>
             </div>
+
           </div>
 
-          <!-- =========================================================
-               GEMINI AI INCIDENT ASSESSMENT
-               Uses the existing ml object stored in Firestore.
-               No additional prediction request is made here.
-          ========================================================== -->
+          <!-- GEMINI AI INCIDENT ASSESSMENT -->
           <AiAssessment
             v-if="inc.ml"
             :ml="inc.ml"
@@ -315,12 +393,14 @@ function toggle(id) {
             audience="citizen"
           />
 
-          <!-- AI processing pending state -->
+          <!-- AI PROCESSING PENDING -->
           <div
             v-else-if="inc.status !== 'cancelled'"
             class="ai-pending"
           >
-            <span class="ai-pending-icon">🤖</span>
+            <span class="ai-pending-icon" aria-hidden="true">
+              🤖
+            </span>
 
             <div>
               <p class="ai-pending-title">
@@ -334,17 +414,25 @@ function toggle(id) {
             </div>
           </div>
 
-          <!-- Live status hint -->
+          <!-- LIVE STATUS -->
           <p
-            v-if="['unverified', 'pending', 'accepted', 'en_route', 'on_scene'].includes(inc.status)"
+            v-if="[
+              'unverified',
+              'pending',
+              'accepted',
+              'en_route',
+              'on_scene'
+            ].includes(inc.status)"
             class="live-hint"
           >
             <span class="live-dot" aria-hidden="true" />
             Live tracking — updates automatically
           </p>
+
         </div>
       </li>
     </ul>
+
   </section>
 </template>
 
@@ -354,7 +442,7 @@ function toggle(id) {
   flex-direction: column;
 }
 
-/* ---------- Header ---------- */
+/* HEADER */
 .head {
   margin-bottom: 16px;
 }
@@ -368,7 +456,7 @@ function toggle(id) {
   line-height: 1.5;
 }
 
-/* ---------- Filter chips ---------- */
+/* FILTER CHIPS */
 .chips {
   display: flex;
   gap: 6px;
@@ -422,11 +510,7 @@ function toggle(id) {
   font-weight: 700;
 }
 
-.chip--on .chip-count {
-  background: rgba(255, 255, 255, 0.3);
-}
-
-/* ---------- States ---------- */
+/* STATES */
 .state-block {
   background: var(--bg-elev);
   border: 1px dashed var(--border);
@@ -474,7 +558,7 @@ function toggle(id) {
   margin-inline: auto;
 }
 
-/* ---------- List ---------- */
+/* LIST */
 .list {
   list-style: none;
   display: flex;
@@ -494,7 +578,7 @@ function toggle(id) {
   border-color: rgba(230, 57, 70, 0.4);
 }
 
-/* ---------- Card head ---------- */
+/* CARD HEADER */
 .card-head {
   display: grid;
   grid-template-columns: 40px 1fr 20px;
@@ -555,11 +639,7 @@ function toggle(id) {
   white-space: nowrap;
 }
 
-.status-chip--unverified {
-  color: #f59e0b;
-  background: rgba(245, 158, 11, 0.14);
-}
-
+.status-chip--unverified,
 .status-chip--pending {
   color: #f59e0b;
   background: rgba(245, 158, 11, 0.14);
@@ -575,11 +655,7 @@ function toggle(id) {
   background: var(--accent-soft);
 }
 
-.status-chip--cancelled {
-  color: var(--text-dim);
-  background: var(--bg-input);
-}
-
+.status-chip--cancelled,
 .status-chip--muted {
   color: var(--text-muted);
   background: var(--bg-input);
@@ -616,9 +692,9 @@ function toggle(id) {
   color: var(--primary);
 }
 
-/* ---------- Card body ---------- */
+/* CARD BODY */
 .card-body {
-  padding: 0 14px 14px;
+  padding: 14px;
   border-top: 1px solid var(--border);
   animation: expand 0.2s ease;
 }
@@ -635,34 +711,12 @@ function toggle(id) {
   }
 }
 
-/* Media */
-.media-row {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  margin-top: 12px;
-  flex-wrap: wrap;
+/* MEDIA GALLERY */
+.incident-media {
+  margin-bottom: 16px;
 }
 
-.media-thumb {
-  width: 60px;
-  height: 60px;
-  border-radius: 8px;
-  object-fit: cover;
-  border: 1px solid var(--border);
-  background: var(--bg-input);
-}
-
-.video-pill {
-  font-size: 0.6875rem;
-  font-weight: 700;
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: var(--bg-input);
-  color: var(--text-muted);
-}
-
-/* Detail grid */
+/* DETAILS */
 .detail-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -696,7 +750,7 @@ function toggle(id) {
   color: var(--text-muted);
 }
 
-/* ---------- AI pending state ---------- */
+/* AI PENDING */
 .ai-pending {
   display: flex;
   align-items: flex-start;
@@ -726,7 +780,7 @@ function toggle(id) {
   color: var(--text-muted);
 }
 
-/* ---------- Live hint ---------- */
+/* LIVE HINT */
 .live-hint {
   display: flex;
   align-items: center;
