@@ -1,4 +1,3 @@
-
 // src/composables/useMediaUpload.js
 //
 // Uploads photos and videos to Firebase Storage.
@@ -49,11 +48,36 @@ function extFromName(name) {
     : ''
 }
 
+/**
+ * Resolve the MIME type to store on the Firebase object.
+ *
+ * IMPORTANT: we trust the file extension first for known formats.
+ * iOS Safari frequently reports the WRONG file.type for videos
+ * (a .mov recorded on iPhone is often reported as video/mp4, or
+ * as an empty string). If we trust file.type, the object gets
+ * stored with a Content-Type that doesn't match the real
+ * container, and browsers reject it during playback.
+ */
 function getContentType(file) {
   const extension = extFromName(file.name)
-
-  // Prefer a meaningful browser-provided MIME type.
+  const extensionMime = MIME_TYPES[extension]
   const browserType = (file.type || '').toLowerCase()
+
+  if (extensionMime) {
+    if (
+      browserType &&
+      browserType !== extensionMime &&
+      browserType !== 'application/octet-stream'
+    ) {
+      console.warn(
+        `[MediaUpload] MIME mismatch for "${file.name}": ` +
+        `extension implies "${extensionMime}", browser reports "${browserType}". ` +
+        `Using extension-derived type.`
+      )
+    }
+
+    return extensionMime
+  }
 
   if (
     browserType &&
@@ -62,8 +86,25 @@ function getContentType(file) {
     return browserType
   }
 
-  // Otherwise infer from the actual file extension.
-  return MIME_TYPES[extension] || ''
+  return ''
+}
+
+/**
+ * iOS records .mov files as HEVC by default, which Chrome/Android
+ * cannot play. Warn during upload so this is visible in logs.
+ */
+function warnIfLikelyUnplayable(file, kind) {
+  if (kind !== 'video') return
+
+  const ext = extFromName(file.name)
+
+  if (ext === 'mov' || ext === 'hevc') {
+    console.warn(
+      `[MediaUpload] Video "${file.name}" is a ${ext.toUpperCase()} file. ` +
+      `iOS records .mov as HEVC by default — Chrome/Android cannot play it. ` +
+      `Transcode to H.264 MP4 for universal compatibility.`
+    )
+  }
 }
 
 /**
@@ -82,6 +123,7 @@ function uploadOne(file, path, onProgress) {
         originalFileName: file.name || 'unknown',
         uploadedAt: new Date().toISOString(),
         originalMimeType: file.type || 'unknown',
+        resolvedMimeType: contentType || 'unknown',
       },
     }
 
@@ -125,13 +167,29 @@ function uploadOne(file, path, onProgress) {
 
       async () => {
         try {
-          const url = await getDownloadURL(
-            task.snapshot.ref
-          )
+          // Confirm the stored Content-Type matches what we intended.
+          const storedMetadata = task.snapshot.metadata || {}
 
           console.log(
             '[MediaUpload] Upload completed:',
-            path
+            path,
+            '| stored Content-Type:',
+            storedMetadata.contentType || '(none — relies on extension)'
+          )
+
+          if (
+            contentType &&
+            storedMetadata.contentType &&
+            storedMetadata.contentType !== contentType
+          ) {
+            console.warn(
+              '[MediaUpload] Stored Content-Type differs from resolved type. ' +
+              `Expected "${contentType}", got "${storedMetadata.contentType}".`
+            )
+          }
+
+          const url = await getDownloadURL(
+            task.snapshot.ref
           )
 
           resolve(url)
@@ -249,6 +307,8 @@ export function useMediaUpload() {
 
       // Upload optional video.
       if (video) {
+        warnIfLikelyUnplayable(video, 'video')
+
         const label = 'video'
 
         setFile(label, {
