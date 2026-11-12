@@ -1,6 +1,6 @@
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 
 const props = defineProps({
   photoUrls: {
@@ -19,18 +19,55 @@ const props = defineProps({
 })
 
 const lightboxIndex = ref(-1)
+
+const videoElement = ref(null)
 const videoRetryKey = ref(0)
 const videoError = ref(false)
-const videoLoading = ref(true)
+const videoLoading = ref(false)
+const videoErrorMessage = ref('')
 
 const isLightboxOpen = computed(() => lightboxIndex.value >= 0)
 
+// Compact mode avoids loading every video in an incident feed.
+const videoPreload = computed(() =>
+  props.mode === 'compact' ? 'none' : 'metadata'
+)
+
+// Reset video state whenever the URL changes.
 watch(
   () => props.videoUrl,
-  () => {
-    videoRetryKey.value++
+  async () => {
     videoError.value = false
-    videoLoading.value = true
+    videoErrorMessage.value = ''
+    videoLoading.value = false
+    videoRetryKey.value++
+
+    await nextTick()
+
+    // Do not force-load videos in compact mode.
+    if (props.mode === 'full' && videoElement.value) {
+      videoLoading.value = true
+      videoElement.value.load()
+    }
+  },
+  { immediate: true }
+)
+
+// Reset the video if the display mode changes.
+watch(
+  () => props.mode,
+  async () => {
+    videoError.value = false
+    videoErrorMessage.value = ''
+    videoLoading.value = false
+    videoRetryKey.value++
+
+    await nextTick()
+
+    if (props.mode === 'full' && videoElement.value) {
+      videoLoading.value = true
+      videoElement.value.load()
+    }
   }
 )
 
@@ -57,25 +94,91 @@ function prevPhoto() {
     props.photoUrls.length
 }
 
-function retryVideo() {
-  videoError.value = false
+// Video events
+function onVideoLoadStart() {
   videoLoading.value = true
-  videoRetryKey.value++
+  videoError.value = false
 }
 
 function onVideoLoaded() {
   videoLoading.value = false
   videoError.value = false
+  videoErrorMessage.value = ''
+}
+
+function onVideoWaiting() {
+  videoLoading.value = true
+}
+
+function onVideoPlaying() {
+  videoLoading.value = false
+  videoError.value = false
 }
 
 function onVideoError(event) {
+  const video = event.target
+  const mediaError = video?.error
+
+  const errorDetails = {
+    code: mediaError?.code,
+    message: mediaError?.message,
+    currentSrc: video?.currentSrc,
+    networkState: video?.networkState,
+    readyState: video?.readyState,
+    mode: props.mode,
+  }
+
   console.error(
-    '[MediaGallery] Video playback failed:',
-    event.target?.error
+    '[MediaGallery] Video playback error:',
+    errorDetails
   )
 
   videoLoading.value = false
+
+  // Code 1 means playback was aborted.
+  // Mobile browsers can abort metadata requests normally.
+  // Do not display a permanent error for this event.
+  if (mediaError?.code === 1) {
+    return
+  }
+
   videoError.value = true
+
+  switch (mediaError?.code) {
+    case 2:
+      videoErrorMessage.value =
+        'A network error interrupted the video. Please check your connection.'
+      break
+
+    case 3:
+      videoErrorMessage.value =
+        'The video could not be decoded by this browser.'
+      break
+
+    case 4:
+      videoErrorMessage.value =
+        'This video format or source is not supported by your browser.'
+      break
+
+    default:
+      videoErrorMessage.value =
+        'The video could not be loaded. Please try again.'
+  }
+}
+
+// Retry playback without uploading the video again.
+async function retryVideo() {
+  videoError.value = false
+  videoErrorMessage.value = ''
+  videoLoading.value = true
+
+  videoRetryKey.value++
+
+  await nextTick()
+
+  if (videoElement.value) {
+    videoElement.value.load()
+  }
 }
 </script>
 
@@ -85,7 +188,10 @@ function onVideoError(event) {
     :class="['gallery', `gallery--${props.mode}`]"
   >
     <!-- PHOTOS -->
-    <div v-if="props.photoUrls.length" class="gallery__photos">
+    <div
+      v-if="props.photoUrls.length"
+      class="gallery__photos"
+    >
       <button
         v-for="(url, index) in props.photoUrls"
         :key="`${index}-${url}`"
@@ -103,28 +209,42 @@ function onVideoError(event) {
     </div>
 
     <!-- VIDEO -->
-    <div v-if="props.videoUrl" class="gallery__video">
-      <div v-if="videoLoading && !videoError" class="video-loading">
+    <div
+      v-if="props.videoUrl"
+      class="gallery__video"
+    >
+      <div
+        v-if="videoLoading && !videoError"
+        class="video-loading"
+      >
         <span class="video-spinner"></span>
         <span>Loading video...</span>
       </div>
 
       <video
         v-if="!videoError"
-        :key="videoRetryKey"
+        :key="`${props.videoUrl}-${videoRetryKey}`"
+        ref="videoElement"
         :src="props.videoUrl"
+        :preload="videoPreload"
         controls
         playsinline
         webkit-playsinline
-        preload="metadata"
+        @loadstart="onVideoLoadStart"
         @loadedmetadata="onVideoLoaded"
         @canplay="onVideoLoaded"
+        @playing="onVideoPlaying"
+        @waiting="onVideoWaiting"
         @error="onVideoError"
       >
         Your browser does not support HTML5 video.
       </video>
 
-      <div v-if="videoError" class="video-error">
+      <!-- ERROR STATE -->
+      <div
+        v-if="videoError"
+        class="video-error"
+      >
         <span class="video-error-icon">⚠️</span>
 
         <p class="video-error-title">
@@ -132,8 +252,7 @@ function onVideoError(event) {
         </p>
 
         <p class="video-error-text">
-          The video may be unavailable, unsupported, or the connection
-          may have been interrupted.
+          {{ videoErrorMessage }}
         </p>
 
         <button
@@ -164,7 +283,12 @@ function onVideoError(event) {
           aria-label="Close photo viewer"
           @click="closeLightbox"
         >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <svg
+            width="22"
+            height="22"
+            viewBox="0 0 24 24"
+            fill="none"
+          >
             <path
               d="M6 6l12 12M18 6L6 18"
               stroke="currentColor"
@@ -181,7 +305,12 @@ function onVideoError(event) {
           aria-label="Previous photo"
           @click.stop="prevPhoto"
         >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+          >
             <path
               d="m15 18-6-6 6-6"
               stroke="currentColor"
@@ -206,7 +335,12 @@ function onVideoError(event) {
           aria-label="Next photo"
           @click.stop="nextPhoto"
         >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+          >
             <path
               d="m9 18 6-6-6-6"
               stroke="currentColor"
@@ -295,6 +429,7 @@ function onVideoError(event) {
   aspect-ratio: 1;
 }
 
+/* VIDEO */
 .gallery__video {
   position: relative;
   width: 100%;
@@ -390,7 +525,7 @@ function onVideoError(event) {
 }
 </style>
 
-<!-- Teleported lightbox styles -->
+<!-- TELEPORTED LIGHTBOX STYLES -->
 <style>
 .lightbox {
   position: fixed;
