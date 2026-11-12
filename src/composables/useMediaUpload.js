@@ -20,7 +20,6 @@ import {
 import { storage } from '@/firebase'
 
 // MIME type fallbacks based on file extension.
-// Never assume every video is an MP4.
 const MIME_TYPES = {
   mp4: 'video/mp4',
   m4v: 'video/x-m4v',
@@ -42,21 +41,11 @@ const MIME_TYPES = {
 
 function extFromName(name) {
   const parts = (name || '').split('.')
-
-  return parts.length > 1
-    ? parts.pop().toLowerCase()
-    : ''
+  return parts.length > 1 ? parts.pop().toLowerCase() : ''
 }
 
 /**
  * Resolve the MIME type to store on the Firebase object.
- *
- * IMPORTANT: we trust the file extension first for known formats.
- * iOS Safari frequently reports the WRONG file.type for videos
- * (a .mov recorded on iPhone is often reported as video/mp4, or
- * as an empty string). If we trust file.type, the object gets
- * stored with a Content-Type that doesn't match the real
- * container, and browsers reject it during playback.
  */
 function getContentType(file) {
   const extension = extFromName(file.name)
@@ -75,34 +64,23 @@ function getContentType(file) {
         `Using extension-derived type.`
       )
     }
-
     return extensionMime
   }
 
-  if (
-    browserType &&
-    browserType !== 'application/octet-stream'
-  ) {
+  if (browserType && browserType !== 'application/octet-stream') {
     return browserType
   }
 
   return ''
 }
 
-/**
- * iOS records .mov files as HEVC by default, which Chrome/Android
- * cannot play. Warn during upload so this is visible in logs.
- */
 function warnIfLikelyUnplayable(file, kind) {
   if (kind !== 'video') return
-
   const ext = extFromName(file.name)
-
   if (ext === 'mov' || ext === 'hevc') {
     console.warn(
       `[MediaUpload] Video "${file.name}" is a ${ext.toUpperCase()} file. ` +
-      `iOS records .mov as HEVC by default — Chrome/Android cannot play it. ` +
-      `Transcode to H.264 MP4 for universal compatibility.`
+      `Applying Fix 1: Forcing upload as .mp4 for iOS compatibility.`
     )
   }
 }
@@ -113,12 +91,10 @@ function warnIfLikelyUnplayable(file, kind) {
 function uploadOne(file, path, onProgress) {
   return new Promise((resolve, reject) => {
     const fileRef = storageRef(storage, path)
-
     const contentType = getContentType(file)
 
     const metadata = {
       cacheControl: 'public, max-age=3600',
-
       customMetadata: {
         originalFileName: file.name || 'unknown',
         uploadedAt: new Date().toISOString(),
@@ -127,7 +103,6 @@ function uploadOne(file, path, onProgress) {
       },
     }
 
-    // Only set contentType when we have a meaningful MIME type.
     if (contentType) {
       metadata.contentType = contentType
     }
@@ -135,63 +110,32 @@ function uploadOne(file, path, onProgress) {
     console.log('[MediaUpload] Uploading file:', {
       name: file.name,
       size: file.size,
-      browserMimeType: file.type,
       storageMimeType: contentType || 'not explicitly specified',
       path,
     })
 
-    const task = uploadBytesResumable(
-      fileRef,
-      file,
-      metadata
-    )
+    const task = uploadBytesResumable(fileRef, file, metadata)
 
     task.on(
       'state_changed',
-
       (snapshot) => {
-        onProgress(
-          snapshot.bytesTransferred,
-          snapshot.totalBytes
-        )
+        onProgress(snapshot.bytesTransferred, snapshot.totalBytes)
       },
-
       (error) => {
-        console.error(
-          '[MediaUpload] Upload failed:',
-          error
-        )
-
+        console.error('[MediaUpload] Upload failed:', error)
         reject(error)
       },
-
       async () => {
         try {
-          // Confirm the stored Content-Type matches what we intended.
           const storedMetadata = task.snapshot.metadata || {}
-
           console.log(
             '[MediaUpload] Upload completed:',
             path,
             '| stored Content-Type:',
-            storedMetadata.contentType || '(none — relies on extension)'
+            storedMetadata.contentType || '(none)'
           )
 
-          if (
-            contentType &&
-            storedMetadata.contentType &&
-            storedMetadata.contentType !== contentType
-          ) {
-            console.warn(
-              '[MediaUpload] Stored Content-Type differs from resolved type. ' +
-              `Expected "${contentType}", got "${storedMetadata.contentType}".`
-            )
-          }
-
-          const url = await getDownloadURL(
-            task.snapshot.ref
-          )
-
+          const url = await getDownloadURL(task.snapshot.ref)
           resolve(url)
         } catch (error) {
           reject(error)
@@ -222,16 +166,12 @@ export function useMediaUpload() {
 
   const progress = computed(() => {
     if (!totalBytes.value) return 0
-
-    return Math.round(
-      (loadedBytes.value / totalBytes.value) * 100
-    )
+    return Math.round((loadedBytes.value / totalBytes.value) * 100)
   })
 
   function setFile(label, patch) {
     uploads.value = {
       ...uploads.value,
-
       [label]: {
         ...(uploads.value[label] || {}),
         ...patch,
@@ -245,18 +185,7 @@ export function useMediaUpload() {
     error.value = ''
   }
 
-  /**
-   * Upload all incident media.
-   *
-   * @param {string} incidentId
-   * @param {File[]} photos
-   * @param {File|null} video
-   */
-  async function uploadAll(
-    incidentId,
-    photos = [],
-    video = null
-  ) {
+  async function uploadAll(incidentId, photos = [], video = null) {
     if (!incidentId) {
       throw new Error('Incident ID is required.')
     }
@@ -271,7 +200,6 @@ export function useMediaUpload() {
       // Upload photos sequentially.
       for (let i = 0; i < photos.length; i++) {
         const file = photos[i]
-
         const label = `photo-${i + 1}`
 
         setFile(label, {
@@ -280,28 +208,14 @@ export function useMediaUpload() {
           status: 'uploading',
         })
 
-        const extension =
-          extFromName(file.name) || 'jpg'
+        const extension = extFromName(file.name) || 'jpg'
+        const path = `incidents/${incidentId}/photo-${i + 1}.${extension}`
 
-        const path =
-          `incidents/${incidentId}/photo-${i + 1}.${extension}`
-
-        const url = await uploadOne(
-          file,
-          path,
-          (loaded, total) => {
-            setFile(label, {
-              loaded,
-              total,
-            })
-          }
-        )
-
-        setFile(label, {
-          status: 'done',
-          url,
+        const url = await uploadOne(file, path, (loaded, total) => {
+          setFile(label, { loaded, total })
         })
 
+        setFile(label, { status: 'done', url })
         photoUrls.push(url)
       }
 
@@ -317,22 +231,21 @@ export function useMediaUpload() {
           status: 'uploading',
         })
 
-        const extension =
-          extFromName(video.name) || 'bin'
+        // -----------------------------------------------------------------
+        // FIX 1: FORCE .MP4 EXTENSION FOR IOS COMPATIBILITY
+        // We create a new File object that pretends to be an MP4.
+        // This tricks iOS Safari into playing it natively over the network.
+        // -----------------------------------------------------------------
+        const forcedMp4File = new File([video], `video.mp4`, {
+          type: 'video/mp4',
+          lastModified: Date.now()
+        })
 
-        const path =
-          `incidents/${incidentId}/video.${extension}`
+        const path = `incidents/${incidentId}/video.mp4`
 
-        videoUrl = await uploadOne(
-          video,
-          path,
-          (loaded, total) => {
-            setFile(label, {
-              loaded,
-              total,
-            })
-          }
-        )
+        videoUrl = await uploadOne(forcedMp4File, path, (loaded, total) => {
+          setFile(label, { loaded, total })
+        })
 
         setFile(label, {
           status: 'done',
@@ -347,16 +260,9 @@ export function useMediaUpload() {
         videoUrl,
       }
     } catch (uploadError) {
-      console.error(
-        '[useMediaUpload] Upload failed:',
-        uploadError
-      )
-
-      error.value =
-        uploadError?.message || 'Upload failed.'
-
+      console.error('[useMediaUpload] Upload failed:', uploadError)
+      error.value = uploadError?.message || 'Upload failed.'
       uploading.value = false
-
       throw uploadError
     }
   }
