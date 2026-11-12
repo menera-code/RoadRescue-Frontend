@@ -1,7 +1,9 @@
+
 <script setup>
 import { ref, computed } from 'vue'
 import { useAuthStore } from '@/stores/auth'
-import { useIncidents, STATUS_GROUPS } from '@/composables/useIncidents'
+import { useIncidents } from '@/composables/useIncidents'
+import AiAssessment from '@/components/AiAssessment.vue'
 
 const auth = useAuthStore()
 
@@ -13,8 +15,8 @@ const {
   loading,
   error,
 } = useIncidents({
-  statuses: null,       // all statuses
-  scope: 'createdByMe', // only incidents where citizenUid == my uid
+  statuses: null,
+  scope: 'createdByMe',
 })
 
 // ---------------------------------------------------------------------------
@@ -23,19 +25,21 @@ const {
 const activeFilter = ref('all')
 
 const FILTERS = [
-  { key: 'all',       label: 'All' },
-  { key: 'active',    label: 'Active' },
-  { key: 'resolved',  label: 'Resolved' },
+  { key: 'all', label: 'All' },
+  { key: 'active', label: 'Active' },
+  { key: 'resolved', label: 'Resolved' },
   { key: 'cancelled', label: 'Cancelled' },
 ]
 
 const filtered = computed(() => {
   if (activeFilter.value === 'all') return incidents.value
+
   if (activeFilter.value === 'active') {
     return incidents.value.filter((i) =>
       ['unverified', 'pending', 'accepted', 'en_route', 'on_scene'].includes(i.status)
     )
   }
+
   return incidents.value.filter((i) => i.status === activeFilter.value)
 })
 
@@ -43,32 +47,33 @@ const filtered = computed(() => {
 // TYPE HELPERS
 // ---------------------------------------------------------------------------
 const TYPE_ICONS = {
-  flat_tire:       '🛞',
-  battery:         '🔋',
-  fuel:            '⛽',
+  flat_tire: '🛞',
+  battery: '🔋',
+  fuel: '⛽',
   stalled_vehicle: '🛑',
   minor_collision: '🚗',
   major_collision: '💥',
-  vehicle_fire:    '🔥',
-  road_hazard:     '⚠️',
-  other:           '❓',
+  vehicle_fire: '🔥',
+  road_hazard: '⚠️',
+  other: '❓',
 }
 
 const TYPE_LABELS = {
-  flat_tire:       'Flat Tire',
-  battery:         'Dead Battery',
-  fuel:            'Out of Fuel',
+  flat_tire: 'Flat Tire',
+  battery: 'Dead Battery',
+  fuel: 'Out of Fuel',
   stalled_vehicle: 'Stalled Vehicle',
   minor_collision: 'Minor Crash',
   major_collision: 'Major Crash',
-  vehicle_fire:    'Vehicle Fire',
-  road_hazard:     'Road Hazard',
-  other:           'Other',
+  vehicle_fire: 'Vehicle Fire',
+  road_hazard: 'Road Hazard',
+  other: 'Other',
 }
 
 function typeIcon(t) {
   return TYPE_ICONS[t] || '❓'
 }
+
 function typeLabel(t) {
   return TYPE_LABELS[t] || 'Incident'
 }
@@ -76,12 +81,12 @@ function typeLabel(t) {
 function statusLabel(status) {
   return {
     unverified: 'Awaiting review',
-    pending:    'Waiting for responder',
-    accepted:   'Responder accepted',
-    en_route:   'Responder on the way',
-    on_scene:   'Responder on scene',
-    resolved:   'Resolved',
-    cancelled:  'Cancelled',
+    pending: 'Waiting for responder',
+    accepted: 'Responder accepted',
+    en_route: 'Responder on the way',
+    on_scene: 'Responder on scene',
+    resolved: 'Resolved',
+    cancelled: 'Cancelled',
   }[status] || status
 }
 
@@ -96,7 +101,9 @@ function statusTone(status) {
 
 function formatDate(ts) {
   if (!ts) return ''
+
   const d = ts instanceof Date ? ts : new Date(ts)
+
   return d.toLocaleDateString('en-PH', {
     month: 'short',
     day: 'numeric',
@@ -106,7 +113,9 @@ function formatDate(ts) {
 
 function formatTime(ts) {
   if (!ts) return ''
+
   const d = ts instanceof Date ? ts : new Date(ts)
+
   return d.toLocaleTimeString('en-PH', {
     hour: 'numeric',
     minute: '2-digit',
@@ -117,6 +126,7 @@ function formatTime(ts) {
 // EXPANDED ROW
 // ---------------------------------------------------------------------------
 const expandedId = ref(null)
+
 function toggle(id) {
   expandedId.value = expandedId.value === id ? null : id
 }
@@ -144,6 +154,7 @@ function toggle(id) {
         @click="activeFilter = f.key"
       >
         {{ f.label }}
+
         <span v-if="f.key === 'all' && incidents.length" class="chip-count">
           {{ incidents.length }}
         </span>
@@ -166,13 +177,16 @@ function toggle(id) {
       <div class="state-icon" aria-hidden="true">
         {{ incidents.length === 0 ? '📋' : '🔍' }}
       </div>
+
       <p class="state-title">
         {{ incidents.length === 0 ? 'No reports yet' : 'Nothing to show' }}
       </p>
+
       <p class="tiny state-text">
         <template v-if="incidents.length === 0">
           When you submit a report, it'll appear here with live status updates.
         </template>
+
         <template v-else>
           No incidents match this filter. Try another tab.
         </template>
@@ -200,7 +214,10 @@ function toggle(id) {
 
           <span class="card-main">
             <span class="card-title-line">
-              <span class="card-title">{{ typeLabel(inc.type) }}</span>
+              <span class="card-title">
+                {{ typeLabel(inc.type) }}
+              </span>
+
               <span
                 class="status-chip"
                 :class="`status-chip--${statusTone(inc.status)}`"
@@ -211,7 +228,10 @@ function toggle(id) {
 
             <span class="card-meta">
               {{ formatDate(inc.createdAt) }} · {{ formatTime(inc.createdAt) }}
-              <template v-if="inc.barangay"> · {{ inc.barangay }}</template>
+
+              <template v-if="inc.barangay">
+                · {{ inc.barangay }}
+              </template>
             </span>
 
             <span v-if="inc.description" class="card-desc">
@@ -234,6 +254,7 @@ function toggle(id) {
 
         <!-- Expanded details -->
         <div v-if="expandedId === inc.id" class="card-body">
+
           <!-- Media thumbnails -->
           <div
             v-if="inc.photoUrls?.length || inc.videoUrl"
@@ -244,12 +265,15 @@ function toggle(id) {
                 v-for="(url, i) in inc.photoUrls.slice(0, 3)"
                 :key="i"
                 :src="url"
-                alt=""
+                alt="Incident evidence"
                 class="media-thumb"
                 loading="lazy"
               />
             </template>
-            <span v-if="inc.videoUrl" class="video-pill">📹 Video</span>
+
+            <span v-if="inc.videoUrl" class="video-pill">
+              📹 Video
+            </span>
           </div>
 
           <!-- Detail grid -->
@@ -261,7 +285,10 @@ function toggle(id) {
               </p>
             </div>
 
-            <div v-if="inc.responderName || inc.assignedResponderName" class="detail-block">
+            <div
+              v-if="inc.responderName || inc.assignedResponderName"
+              class="detail-block"
+            >
               <p class="detail-label">Responder</p>
               <p class="detail-value">
                 {{ inc.assignedResponderName || inc.responderName }}
@@ -270,16 +297,39 @@ function toggle(id) {
 
             <div v-if="inc.responseTimeSeconds" class="detail-block">
               <p class="detail-label">Acknowledged in</p>
-              <p class="detail-value">{{ inc.responseTimeSeconds }}s</p>
-            </div>
-
-            <div v-if="inc.ml?.predictedType" class="detail-block">
-              <p class="detail-label">AI classification</p>
               <p class="detail-value">
-                {{ typeLabel(inc.ml.predictedType) }}
-                <template v-if="inc.ml.confidence">
-                  · {{ Math.round(inc.ml.confidence * 100) }}%
-                </template>
+                {{ inc.responseTimeSeconds }}s
+              </p>
+            </div>
+          </div>
+
+          <!-- =========================================================
+               GEMINI AI INCIDENT ASSESSMENT
+               Uses the existing ml object stored in Firestore.
+               No additional prediction request is made here.
+          ========================================================== -->
+          <AiAssessment
+            v-if="inc.ml"
+            :ml="inc.ml"
+            :reported-type="inc.type"
+            audience="citizen"
+          />
+
+          <!-- AI processing pending state -->
+          <div
+            v-else-if="inc.status !== 'cancelled'"
+            class="ai-pending"
+          >
+            <span class="ai-pending-icon">🤖</span>
+
+            <div>
+              <p class="ai-pending-title">
+                AI assessment not available yet
+              </p>
+
+              <p class="ai-pending-text">
+                The incident may still be waiting for AI processing.
+                Check again shortly.
               </p>
             </div>
           </div>
@@ -308,7 +358,11 @@ function toggle(id) {
 .head {
   margin-bottom: 16px;
 }
-.head .h1 { font-size: 1.5rem; }
+
+.head .h1 {
+  font-size: 1.5rem;
+}
+
 .head .muted {
   margin-top: 4px;
   line-height: 1.5;
@@ -323,7 +377,10 @@ function toggle(id) {
   margin-bottom: 16px;
   scrollbar-width: none;
 }
-.chips::-webkit-scrollbar { display: none; }
+
+.chips::-webkit-scrollbar {
+  display: none;
+}
 
 .chip {
   display: inline-flex;
@@ -342,12 +399,17 @@ function toggle(id) {
   transition: all 0.15s ease;
   white-space: nowrap;
 }
-.chip:active { transform: scale(0.96); }
+
+.chip:active {
+  transform: scale(0.96);
+}
+
 .chip--on {
   background: var(--primary);
   border-color: var(--primary);
   color: #fff;
 }
+
 .chip-count {
   display: inline-grid;
   place-items: center;
@@ -359,6 +421,7 @@ function toggle(id) {
   font-size: 0.6875rem;
   font-weight: 700;
 }
+
 .chip--on .chip-count {
   background: rgba(255, 255, 255, 0.3);
 }
@@ -372,9 +435,11 @@ function toggle(id) {
   text-align: center;
   margin-top: 8px;
 }
+
 .state-block--error {
   border-color: rgba(239, 68, 68, 0.3);
 }
+
 .state-spinner {
   width: 26px;
   height: 26px;
@@ -384,17 +449,25 @@ function toggle(id) {
   animation: spin 0.8s linear infinite;
   margin: 0 auto 12px;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .state-icon {
   font-size: 2rem;
   margin-bottom: 10px;
   opacity: 0.8;
 }
+
 .state-title {
   font-size: 0.9375rem;
   font-weight: 650;
   margin-bottom: 4px;
 }
+
 .state-text {
   line-height: 1.5;
   max-width: 30ch;
@@ -416,6 +489,7 @@ function toggle(id) {
   overflow: hidden;
   transition: border-color 0.15s ease;
 }
+
 .card--open {
   border-color: rgba(230, 57, 70, 0.4);
 }
@@ -435,7 +509,10 @@ function toggle(id) {
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-.card-head:active { background: var(--bg-input); }
+
+.card-head:active {
+  background: var(--bg-input);
+}
 
 .card-icon {
   width: 40px;
@@ -461,6 +538,7 @@ function toggle(id) {
   gap: 8px;
   flex-wrap: wrap;
 }
+
 .card-title {
   font-size: 0.9375rem;
   font-weight: 700;
@@ -476,12 +554,36 @@ function toggle(id) {
   border-radius: 5px;
   white-space: nowrap;
 }
-.status-chip--unverified { color: #f59e0b; background: rgba(245, 158, 11, 0.14); }
-.status-chip--pending    { color: #f59e0b; background: rgba(245, 158, 11, 0.14); }
-.status-chip--active     { color: #3b82f6; background: rgba(59, 130, 246, 0.14); }
-.status-chip--resolved   { color: var(--accent); background: var(--accent-soft); }
-.status-chip--cancelled  { color: var(--text-dim); background: var(--bg-input); }
-.status-chip--muted      { color: var(--text-muted); background: var(--bg-input); }
+
+.status-chip--unverified {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.status-chip--pending {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.status-chip--active {
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.14);
+}
+
+.status-chip--resolved {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.status-chip--cancelled {
+  color: var(--text-dim);
+  background: var(--bg-input);
+}
+
+.status-chip--muted {
+  color: var(--text-muted);
+  background: var(--bg-input);
+}
 
 .card-meta {
   font-size: 0.6875rem;
@@ -508,6 +610,7 @@ function toggle(id) {
   transition: transform 0.2s ease;
   margin-top: 4px;
 }
+
 .card--open .card-chev {
   transform: rotate(180deg);
   color: var(--primary);
@@ -519,9 +622,17 @@ function toggle(id) {
   border-top: 1px solid var(--border);
   animation: expand 0.2s ease;
 }
+
 @keyframes expand {
-  from { opacity: 0; transform: translateY(-4px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* Media */
@@ -532,6 +643,7 @@ function toggle(id) {
   margin-top: 12px;
   flex-wrap: wrap;
 }
+
 .media-thumb {
   width: 60px;
   height: 60px;
@@ -540,6 +652,7 @@ function toggle(id) {
   border: 1px solid var(--border);
   background: var(--bg-input);
 }
+
 .video-pill {
   font-size: 0.6875rem;
   font-weight: 700;
@@ -556,7 +669,11 @@ function toggle(id) {
   gap: 12px 16px;
   margin-top: 14px;
 }
-.detail-block { min-width: 0; }
+
+.detail-block {
+  min-width: 0;
+}
+
 .detail-label {
   font-size: 0.625rem;
   font-weight: 700;
@@ -565,19 +682,51 @@ function toggle(id) {
   color: var(--text-muted);
   margin-bottom: 4px;
 }
+
 .detail-value {
   font-size: 0.875rem;
   color: var(--text);
   line-height: 1.4;
   word-break: break-word;
 }
+
 .detail-value--mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.75rem;
   color: var(--text-muted);
 }
 
-/* Live hint */
+/* ---------- AI pending state ---------- */
+.ai-pending {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-input);
+}
+
+.ai-pending-icon {
+  font-size: 1.25rem;
+  flex-shrink: 0;
+}
+
+.ai-pending-title {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.ai-pending-text {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* ---------- Live hint ---------- */
 .live-hint {
   display: flex;
   align-items: center;
@@ -589,6 +738,7 @@ function toggle(id) {
   background: var(--accent-soft);
   border-radius: 8px;
 }
+
 .live-dot {
   width: 6px;
   height: 6px;
@@ -596,8 +746,17 @@ function toggle(id) {
   background: var(--accent);
   animation: pulse-dot 1.5s ease-in-out infinite;
 }
+
 @keyframes pulse-dot {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50%      { opacity: 0.4; transform: scale(0.85); }
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
 }
 </style>
