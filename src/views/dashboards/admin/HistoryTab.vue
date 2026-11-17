@@ -1,7 +1,17 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import {
+  collection,
+  documentId,
+  getDocs,
+  query,
+  where,
+} from 'firebase/firestore'
+
+import { db } from '@/firebase'
 import { getIncidentIcon, getIncidentLabel } from '@/utils/incidentTypes'
+import AiAssessment from '@/components/AiAssessment.vue'
 import { getAdminAnalytics } from '@/services/adminAnalytics'
 
 // ============================================================
@@ -20,12 +30,89 @@ const barangayFilter = ref('')
 
 const incidents = ref([])
 const loading = ref(false)
+const loadingAi = ref(false)
 const error = ref('')
+const aiError = ref('')
 const total = ref(0)
 const expandedId = ref(null)
 
 let debounceTimer = null
 let requestNumber = 0
+
+// ============================================================
+// FETCH AI DATA FROM EXISTING FIRESTORE INCIDENT DOCUMENTS
+//
+// The existing history API does not return the nested ml object.
+// We retrieve it directly from Firestore using the incident IDs
+// returned by the existing API.
+//
+// Firestore "in" queries support up to 30 IDs per query.
+// ============================================================
+
+async function attachAiAssessments(historyRecords) {
+  const records = Array.isArray(historyRecords)
+    ? historyRecords
+    : []
+
+  if (!records.length) return records
+
+  loadingAi.value = true
+  aiError.value = ''
+
+  const mlById = new Map()
+
+  try {
+    const ids = records
+      .map(item => item.id)
+      .filter(Boolean)
+
+    const chunks = []
+
+    for (let i = 0; i < ids.length; i += 30) {
+      chunks.push(ids.slice(i, i + 30))
+    }
+
+    const results = await Promise.all(
+      chunks.map(async chunk => {
+        const incidentQuery = query(
+          collection(db, 'incidents'),
+          where(documentId(), 'in', chunk)
+        )
+
+        return await getDocs(incidentQuery)
+      })
+    )
+
+    results.forEach(snapshot => {
+      snapshot.forEach(document => {
+        const data = document.data()
+
+        mlById.set(document.id, data.ml || null)
+      })
+    })
+
+    return records.map(item => ({
+      ...item,
+      ml: mlById.get(item.id) || null,
+    }))
+  } catch (err) {
+    console.error(
+      '[Admin History] Could not retrieve Firestore AI assessments:',
+      err
+    )
+
+    aiError.value =
+      'AI assessment details could not be retrieved from Firestore. Check your Firebase read permissions.'
+
+    // Preserve history records even if Firestore AI reads fail.
+    return records.map(item => ({
+      ...item,
+      ml: null,
+    }))
+  } finally {
+    loadingAi.value = false
+  }
+}
 
 // ============================================================
 // FETCH HISTORY FROM EXISTING BACKEND
@@ -37,6 +124,7 @@ async function fetchHistory() {
 
   loading.value = true
   error.value = ''
+  aiError.value = ''
 
   try {
     const params = {
@@ -47,6 +135,7 @@ async function fetchHistory() {
     if (toDate.value) params.to = toDate.value
     if (statusFilter.value) params.status = statusFilter.value
     if (typeFilter.value) params.type = typeFilter.value
+
     if (barangayFilter.value.trim()) {
       params.barangay = barangayFilter.value.trim()
     }
@@ -55,16 +144,33 @@ async function fetchHistory() {
 
     if (currentRequest !== requestNumber) return
 
-    incidents.value = Array.isArray(data.incidents)
+    const historyRecords = Array.isArray(data.incidents)
       ? data.incidents
       : []
 
     total.value = Number(data.total || 0)
+
+    // First display the API records.
+    incidents.value = historyRecords.map(item => ({
+      ...item,
+      ml: null,
+    }))
+
+    // Then attach the actual stored AI assessments.
+    const enrichedRecords = await attachAiAssessments(
+      historyRecords
+    )
+
+    if (currentRequest !== requestNumber) return
+
+    incidents.value = enrichedRecords
   } catch (err) {
     console.error('[Admin History] Failed to load:', err)
 
     if (currentRequest === requestNumber) {
-      error.value = err?.message || 'Could not load incident history.'
+      error.value =
+        err?.message || 'Could not load incident history.'
+
       incidents.value = []
       total.value = 0
     }
@@ -82,7 +188,9 @@ async function fetchHistory() {
 watch(
   [fromDate, toDate, statusFilter, typeFilter, barangayFilter],
   () => {
-    if (debounceTimer) clearTimeout(debounceTimer)
+    if (debounceTimer) {
+      clearTimeout(debounceTimer)
+    }
 
     debounceTimer = setTimeout(() => {
       fetchHistory()
@@ -124,15 +232,13 @@ function clearFilters() {
   barangayFilter.value = ''
 }
 
-const hasFilters = computed(() => {
-  return Boolean(
-    fromDate.value ||
-    toDate.value ||
-    statusFilter.value ||
-    typeFilter.value ||
-    barangayFilter.value
-  )
-})
+const hasFilters = computed(() => Boolean(
+  fromDate.value ||
+  toDate.value ||
+  statusFilter.value ||
+  typeFilter.value ||
+  barangayFilter.value
+))
 
 // ============================================================
 // FORMATTERS
@@ -141,7 +247,8 @@ const hasFilters = computed(() => {
 function typeLabel(type) {
   if (!type) return 'Unknown incident'
 
-  return getIncidentLabel(type) || String(type).replaceAll('_', ' ')
+  return getIncidentLabel(type) ||
+    String(type).replaceAll('_', ' ')
 }
 
 function typeIcon(type) {
@@ -210,12 +317,16 @@ function severityTone(severity) {
   }[value] || 'unknown'
 }
 
+// ============================================================
+// INCIDENT DETAILS
+// ============================================================
+
 function toggleRow(id) {
   expandedId.value = expandedId.value === id ? null : id
 }
 
 // ============================================================
-// HISTORY SUMMARY
+// SUMMARY
 // ============================================================
 
 const resolvedCount = computed(() =>
@@ -235,6 +346,12 @@ const pendingCount = computed(() =>
 const withMediaCount = computed(() =>
   incidents.value.filter(item =>
     Number(item.photoCount || 0) > 0 || item.hasVideo
+  ).length
+)
+
+const aiAnalyzedCount = computed(() =>
+  incidents.value.filter(item =>
+    item.ml && Object.keys(item.ml).length > 0
   ).length
 )
 
@@ -264,9 +381,13 @@ function exportCSV() {
   const headers = [
     'Incident ID',
     'Created At',
-    'Incident Type',
     'Reported Type',
-    'Severity',
+    'AI Predicted Type',
+    'AI Predicted Severity',
+    'AI Confidence',
+    'AI Analysis Status',
+    'Human Review Required',
+    'Category Match',
     'Status',
     'Barangay',
     'Citizen Name',
@@ -281,25 +402,33 @@ function exportCSV() {
     'Description',
   ]
 
-  const rows = incidents.value.map(item => [
-    item.id,
-    item.createdAt,
-    item.type,
-    item.reportedType,
-    item.severity,
-    item.status,
-    item.barangay,
-    item.citizenName,
-    item.citizenPhone,
-    item.responderName,
-    item.acknowledgedAt,
-    item.resolvedAt,
-    item.responseTimeSeconds,
-    item.respondedDurationSeconds,
-    item.photoCount,
-    item.hasVideo ? 'Yes' : 'No',
-    item.description,
-  ])
+  const rows = incidents.value.map(item => {
+    const ml = item.ml || {}
+
+    return [
+      item.id,
+      item.createdAt,
+      item.reportedType,
+      ml.predictedType,
+      ml.predictedSeverity,
+      ml.confidence,
+      ml.analysisStatus,
+      ml.needsHumanReview,
+      ml.reportedTypeMatches,
+      item.status,
+      item.barangay,
+      item.citizenName,
+      item.citizenPhone,
+      item.responderName,
+      item.acknowledgedAt,
+      item.resolvedAt,
+      item.responseTimeSeconds,
+      item.respondedDurationSeconds,
+      item.photoCount,
+      item.hasVideo ? 'Yes' : 'No',
+      item.description,
+    ]
+  })
 
   const csv = [
     headers.map(csvEscape).join(','),
@@ -315,7 +444,8 @@ function exportCSV() {
   const link = document.createElement('a')
 
   link.href = url
-  link.download = `roadrescue-history-${new Date().toISOString().slice(0, 10)}.csv`
+  link.download =
+    `roadrescue-history-${new Date().toISOString().slice(0, 10)}.csv`
 
   document.body.appendChild(link)
   link.click()
@@ -333,7 +463,7 @@ function exportCSV() {
       <div>
         <h1 class="h1">Incident History</h1>
         <p class="muted">
-          Review and monitor recorded emergency incidents.
+          Review incident records and AI-assisted assessments.
         </p>
       </div>
 
@@ -344,8 +474,7 @@ function exportCSV() {
           :disabled="loading"
           @click="fetchHistory"
         >
-          <span :class="{ spinning: loading }">↻</span>
-          Refresh
+          ↻ Refresh
         </button>
 
         <button
@@ -372,7 +501,7 @@ function exportCSV() {
         <strong class="summary-number success">
           {{ resolvedCount }}
         </strong>
-        <span class="summary-description">Currently displayed</span>
+        <span class="summary-description">Displayed records</span>
       </article>
 
       <article class="summary-card">
@@ -380,15 +509,17 @@ function exportCSV() {
         <strong class="summary-number warning">
           {{ pendingCount }}
         </strong>
-        <span class="summary-description">Currently displayed</span>
+        <span class="summary-description">Displayed records</span>
       </article>
 
       <article class="summary-card">
-        <span class="summary-label">With media</span>
-        <strong class="summary-number">
-          {{ withMediaCount }}
+        <span class="summary-label">AI assessed</span>
+        <strong class="summary-number ai-number">
+          {{ aiAnalyzedCount }}
         </strong>
-        <span class="summary-description">Photos or videos</span>
+        <span class="summary-description">
+          {{ loadingAi ? 'Checking assessments...' : 'With stored AI results' }}
+        </span>
       </article>
     </div>
 
@@ -491,11 +622,13 @@ function exportCSV() {
       </button>
     </div>
 
-    <!-- RESULT COUNT -->
+    <!-- RESULT HEADING -->
     <div class="result-heading">
       <div>
         <h2>Incident records</h2>
-        <p>{{ incidents.length }} displayed of {{ total }} matching records</p>
+        <p>
+          {{ incidents.length }} displayed of {{ total }} matching records
+        </p>
       </div>
 
       <span class="live-indicator">
@@ -511,7 +644,10 @@ function exportCSV() {
     </div>
 
     <!-- ERROR -->
-    <div v-else-if="error && !incidents.length" class="state-block error-state">
+    <div
+      v-else-if="error && !incidents.length"
+      class="state-block error-state"
+    >
       <div class="state-icon">⚠️</div>
       <h3>Unable to load history</h3>
       <p>{{ error }}</p>
@@ -525,6 +661,7 @@ function exportCSV() {
       <div class="state-icon">📋</div>
       <h3>No incidents found</h3>
       <p>Try changing your filters or date range.</p>
+
       <button
         v-if="hasFilters"
         class="retry-btn"
@@ -543,6 +680,7 @@ function exportCSV() {
         class="incident-card"
         :class="{ expanded: expandedId === incident.id }"
       >
+
         <!-- INCIDENT HEADER -->
         <button
           type="button"
@@ -551,12 +689,14 @@ function exportCSV() {
           @click="toggleRow(incident.id)"
         >
           <div class="incident-icon">
-            {{ typeIcon(incident.type) }}
+            {{ typeIcon(incident.ml?.predictedType || incident.type) }}
           </div>
 
           <div class="incident-main">
             <div class="incident-title-line">
-              <strong>{{ typeLabel(incident.type) }}</strong>
+              <strong>
+                {{ typeLabel(incident.ml?.predictedType || incident.type) }}
+              </strong>
 
               <span
                 class="status-chip"
@@ -564,10 +704,18 @@ function exportCSV() {
               >
                 {{ incident.status || 'Unknown' }}
               </span>
+
+              <span
+                v-if="incident.ml"
+                class="ai-mini-badge"
+              >
+                AI assessed
+              </span>
             </div>
 
             <div class="incident-meta">
               <span>{{ formatDateTime(incident.createdAt) }}</span>
+
               <span v-if="incident.barangay">
                 · {{ incident.barangay }}
               </span>
@@ -585,6 +733,7 @@ function exportCSV() {
           class="incident-details"
         >
 
+          <!-- INCIDENT INFORMATION -->
           <div class="detail-section">
             <h3>Incident information</h3>
 
@@ -602,7 +751,7 @@ function exportCSV() {
               </div>
 
               <div class="detail-item">
-                <span>Severity</span>
+                <span>Reported severity</span>
                 <strong
                   class="severity-chip"
                   :class="`severity-${severityTone(incident.severity)}`"
@@ -629,12 +778,52 @@ function exportCSV() {
               </div>
 
               <div class="detail-item">
-                <span>Backend-normalized type</span>
+                <span>AI predicted type</span>
                 <strong>
-                  {{ typeLabel(incident.type) }}
+                  {{ typeLabel(incident.ml?.predictedType || incident.type) }}
                 </strong>
               </div>
 
+            </div>
+          </div>
+
+          <!-- EXISTING AI ASSESSMENT COMPONENT -->
+          <div class="detail-section ai-detail-section">
+            <div class="ai-section-heading">
+              <div>
+                <h3>AI Incident Assessment</h3>
+                <p>
+                  Gemini analysis stored with this incident
+                </p>
+              </div>
+
+              <span
+                v-if="incident.ml"
+                class="ai-available-badge"
+              >
+                <span></span>
+                Available
+              </span>
+            </div>
+
+            <AiAssessment
+              v-if="incident.ml && Object.keys(incident.ml).length"
+              :ml="incident.ml"
+              :reported-type="incident.ml.reportedType || incident.reportedType || ''"
+              audience="admin"
+            />
+
+            <div v-else class="no-ai-data">
+              <div class="no-ai-icon">🧠</div>
+
+              <div>
+                <strong>AI assessment unavailable</strong>
+                <p>
+                  No stored AI assessment was found for this incident.
+                  This may mean that analysis has not completed or that
+                  no ML result was saved.
+                </p>
+              </div>
             </div>
           </div>
 
@@ -697,6 +886,7 @@ function exportCSV() {
             <div class="media-summary">
               <div class="media-item">
                 <span class="media-icon">📷</span>
+
                 <div>
                   <strong>{{ incident.photoCount || 0 }}</strong>
                   <span>Photos</span>
@@ -705,37 +895,30 @@ function exportCSV() {
 
               <div class="media-item">
                 <span class="media-icon">🎥</span>
+
                 <div>
-                  <strong>{{ incident.hasVideo ? 'Yes' : 'No' }}</strong>
+                  <strong>
+                    {{ incident.hasVideo ? 'Yes' : 'No' }}
+                  </strong>
                   <span>Video submitted</span>
                 </div>
               </div>
             </div>
           </div>
 
-          <!-- AI DATA AVAILABILITY NOTICE -->
-          <div class="data-note">
-            <strong>Classification information</strong>
-            <p>
-              The history endpoint provides the reported incident type
-              and the backend-normalized incident type. It does not
-              currently return a separate AI confidence score or
-              prediction record in this response.
-            </p>
-          </div>
-
         </div>
       </article>
+    </div>
+
+    <!-- FIRESTORE WARNING -->
+    <div v-if="aiError" class="inline-error">
+      {{ aiError }}
     </div>
 
     <!-- FOOTER -->
     <p v-if="incidents.length" class="footer-note">
       Displaying {{ incidents.length }} of {{ total }} matching incidents.
     </p>
-
-    <div v-if="error && incidents.length" class="inline-error">
-      Refresh warning: {{ error }}
-    </div>
 
   </section>
 </template>
@@ -807,11 +990,6 @@ function exportCSV() {
   cursor: not-allowed;
 }
 
-.spinning {
-  display: inline-block;
-  animation: spin 0.8s linear infinite;
-}
-
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -851,6 +1029,10 @@ function exportCSV() {
 
 .warning {
   color: #d97706;
+}
+
+.ai-number {
+  color: #38bdf8;
 }
 
 .preset-row {
@@ -1120,6 +1302,16 @@ function exportCSV() {
   background: var(--bg-input);
 }
 
+.ai-mini-badge {
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: rgba(14, 165, 233, 0.12);
+  color: #38bdf8;
+  font-size: 0.61rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .expand-icon {
   color: var(--text-muted);
   font-size: 1.35rem;
@@ -1219,6 +1411,73 @@ function exportCSV() {
   background: var(--bg-input);
 }
 
+.ai-detail-section {
+  padding: 15px;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 12px;
+  background: rgba(14, 165, 233, 0.035);
+}
+
+.ai-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.ai-section-heading h3 {
+  margin-bottom: 3px;
+  color: #38bdf8;
+}
+
+.ai-section-heading p {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.ai-available-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #16a34a;
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+
+.ai-available-badge span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #16a34a;
+}
+
+.no-ai-data {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--bg-input);
+}
+
+.no-ai-icon {
+  font-size: 1.5rem;
+}
+
+.no-ai-data strong {
+  font-size: 0.8rem;
+}
+
+.no-ai-data p {
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 0.73rem;
+  line-height: 1.5;
+}
+
 .media-summary {
   display: flex;
   flex-wrap: wrap;
@@ -1255,36 +1514,19 @@ function exportCSV() {
   font-size: 0.68rem;
 }
 
-.data-note {
-  padding: 13px;
-  border: 1px solid rgba(59, 130, 246, 0.2);
-  border-radius: 10px;
-  background: rgba(59, 130, 246, 0.06);
-}
-
-.data-note strong {
-  font-size: 0.77rem;
-}
-
-.data-note p {
-  margin-top: 5px;
-  color: var(--text-muted);
-  font-size: 0.73rem;
-  line-height: 1.55;
-}
-
-.footer-note {
-  color: var(--text-dim);
-  text-align: center;
-  font-size: 0.73rem;
-}
-
 .inline-error {
   padding: 10px 13px;
   border-radius: 9px;
   background: rgba(239, 68, 68, 0.08);
   color: #ef4444;
   font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.footer-note {
+  color: var(--text-dim);
+  text-align: center;
+  font-size: 0.73rem;
 }
 
 @media (min-width: 650px) {
