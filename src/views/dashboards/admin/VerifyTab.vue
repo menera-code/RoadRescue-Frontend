@@ -13,7 +13,6 @@ import {
   useIncidents,
   STATUS_GROUPS,
 } from '@/composables/useIncidents'
-import MediaGallery from '@/components/MediaGallery.vue'
 import AiAssessment from '@/components/AiAssessment.vue'
 import { searchBarangays } from '@/data/barangays'
 
@@ -569,20 +568,56 @@ async function onReject() {
 
           </div>
 
-          <!-- Photo and video gallery -->
-          <MediaGallery
-            v-if="
-              selectedIncident.photoUrls?.length ||
-              selectedIncident.videoUrl
-            "
-            :photo-urls="selectedIncident.photoUrls || []"
-            :video-url="selectedIncident.videoUrl || null"
-            mode="full"
-          />
+          <!-- Photos displayed directly -->
+          <div
+            v-if="selectedIncident.photoUrls?.length"
+            class="incident-photos"
+          >
+            <img
+              v-for="(photoUrl, index) in selectedIncident.photoUrls"
+              :key="`${selectedIncident.id}-photo-${index}`"
+              :src="photoUrl"
+              :alt="`Incident photo ${index + 1}`"
+              class="incident-photo"
+              loading="lazy"
+            />
+          </div>
+
+          <!-- Native video player: no gallery component or playback composable -->
+          <div
+            v-if="selectedIncident.videoUrl"
+            class="video-container"
+          >
+            <video
+              :key="selectedIncident.videoUrl"
+              class="incident-video"
+              :src="selectedIncident.videoUrl"
+              controls
+              playsinline
+              webkit-playsinline
+              preload="metadata"
+              controlslist="nodownload"
+            >
+              Your browser does not support HTML5 video.
+            </video>
+
+            <a
+              class="video-open-link"
+              :href="selectedIncident.videoUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Open original video
+            </a>
+          </div>
 
           <!-- No media -->
           <div
-            v-else-if="!isEmergency || !selectedIncident.audioUrl"
+            v-if="
+              !selectedIncident.photoUrls?.length &&
+              !selectedIncident.videoUrl &&
+              (!isEmergency || !selectedIncident.audioUrl)
+            "
             class="no-media"
           >
             <div class="no-media-icon" aria-hidden="true">
@@ -1344,6 +1379,53 @@ async function onReject() {
 .emergency-audio-player {
   width: 100%;
   height: 44px;
+}
+
+/* Direct photo and native video playback */
+.incident-photos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  width: 100%;
+}
+
+.incident-photo {
+  display: block;
+  width: 100%;
+  max-height: 280px;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  background: #000;
+  border-radius: var(--radius);
+}
+
+.video-container {
+  width: 100%;
+  min-width: 0;
+  margin-top: 4px;
+}
+
+.incident-video {
+  display: block;
+  width: 100%;
+  max-height: 480px;
+  min-height: 180px;
+  background: #000;
+  border-radius: var(--radius);
+  object-fit: contain;
+}
+
+.video-open-link {
+  display: inline-block;
+  margin-top: 10px;
+  color: #3b82f6;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.video-open-link:hover {
+  text-decoration: underline;
 }
 
 /* Media */
