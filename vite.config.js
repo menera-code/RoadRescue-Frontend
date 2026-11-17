@@ -1,3 +1,4 @@
+
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
@@ -20,8 +21,16 @@ export default defineConfig({
         start_url: '/',
         scope: '/',
         icons: [
-          { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+          {
+            src: '/icons/icon-192.png',
+            sizes: '192x192',
+            type: 'image/png',
+          },
+          {
+            src: '/icons/icon-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+          },
           {
             src: '/icons/icon-maskable-512.png',
             sizes: '512x512',
@@ -44,8 +53,13 @@ export default defineConfig({
             handler: 'CacheFirst',
             options: {
               cacheName: 'openfreemap-tiles',
-              expiration: { maxEntries: 500, maxAgeSeconds: 2592000 },
-              cacheableResponse: { statuses: [0, 200] },
+              expiration: {
+                maxEntries: 500,
+                maxAgeSeconds: 2592000,
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
             },
           },
           {
@@ -53,22 +67,25 @@ export default defineConfig({
             handler: 'CacheFirst',
             options: {
               cacheName: 'google-satellite-tiles',
-              expiration: { maxEntries: 500, maxAgeSeconds: 1209600 },
-              cacheableResponse: { statuses: [0, 200] },
+              expiration: {
+                maxEntries: 500,
+                maxAgeSeconds: 1209600,
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
             },
           },
-          {
-            urlPattern: /^https:\/\/firebasestorage\.googleapis\.com\/.*/i,
-            handler: 'StaleWhileRevalidate',
-            options: {
-              cacheName: 'firebase-storage',
-              expiration: { maxEntries: 200, maxAgeSeconds: 604800 },
-              cacheableResponse: { statuses: [0, 200] },
-            },
-          },
+
+          // IMPORTANT:
+          // Firebase Storage is deliberately NOT cached by the PWA.
+          // Video playback needs proper HTTP Range requests.
+          // Let Safari, Chrome, and the network handle these requests.
         ],
       },
-      devOptions: { enabled: false },
+      devOptions: {
+        enabled: false,
+      },
     }),
   ],
   resolve: {
@@ -76,5 +93,4 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
-  // No `build` block. That's the fix.
 })
