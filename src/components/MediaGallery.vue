@@ -1,453 +1,371 @@
-
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 
 const props = defineProps({
   photoUrls: {
     type: Array,
     default: () => [],
   },
-
   videoUrl: {
     type: String,
     default: null,
   },
-
   mode: {
     type: String,
     default: 'full',
   },
 })
 
-// Photo lightbox
-const lightboxIndex = ref(-1)
-
-const isLightboxOpen = computed(
-  () => lightboxIndex.value >= 0
-)
-
-// Video state
-const videoError = ref(false)
+const videoElement = ref(null)
+const videoError = ref('')
 const videoLoading = ref(false)
+const videoReady = ref(false)
 
-const videoPlayer = ref(null)
-
-// Reset when Firebase URL changes
-watch(
-  () => props.videoUrl,
-  () => {
-    videoError.value = false
-    videoLoading.value = false
-  }
+const photos = computed(() => (props.photoUrls || []).filter(Boolean))
+const hasVideo = computed(() =>
+  typeof props.videoUrl === 'string' && props.videoUrl.trim().length > 0
 )
+
+function resetVideoState() {
+  videoError.value = ''
+  videoReady.value = false
+  videoLoading.value = hasVideo.value
+}
 
 function onVideoLoadStart() {
   videoLoading.value = true
-  videoError.value = false
+  videoError.value = ''
 }
 
-function onVideoReady() {
+function onVideoMetadata() {
+  videoReady.value = true
   videoLoading.value = false
-  videoError.value = false
+  videoError.value = ''
+}
+
+function onVideoCanPlay() {
+  videoReady.value = true
+  videoLoading.value = false
+  videoError.value = ''
 }
 
 function onVideoError(event) {
   videoLoading.value = false
-  videoError.value = true
+  videoReady.value = false
 
-  const video = event.target
+  const video = event?.target
+  const errorCode = video?.error?.code
 
-  console.error('[RoadRescue Video] Playback failed:', {
+  console.error('[MediaGallery] Video playback error:', {
+    code: errorCode,
+    message: video?.error?.message,
     url: props.videoUrl,
-    errorCode: video?.error?.code,
-    errorMessage: video?.error?.message,
     networkState: video?.networkState,
     readyState: video?.readyState,
   })
+
+  switch (errorCode) {
+    case 1:
+      videoError.value = 'Video loading was interrupted. Please try again.'
+      break
+    case 2:
+      videoError.value = 'A network error occurred while loading this video.'
+      break
+    case 3:
+      videoError.value = 'Safari could not decode this video. It may use an unsupported video or audio codec.'
+      break
+    case 4:
+      videoError.value = 'This video format or source is not supported by Safari.'
+      break
+    default:
+      videoError.value = 'Unable to play this video. Check the video format and Firebase Storage URL.'
+  }
 }
 
-function retryVideo() {
-  videoError.value = false
+async function retryVideo() {
+  videoError.value = ''
+  videoLoading.value = true
+  videoReady.value = false
 
-  const player = videoPlayer.value
+  await nextTick()
+  const video = videoElement.value
+  if (!video) return
 
-  if (!player) return
-
-  player.load()
+  try {
+    video.pause()
+    video.load()
+  } catch (error) {
+    console.error('[MediaGallery] Retry failed:', error)
+    videoLoading.value = false
+  }
 }
 
-function openLightbox(index) {
-  lightboxIndex.value = index
-}
-
-function closeLightbox() {
-  lightboxIndex.value = -1
-}
-
-function nextPhoto() {
-  if (!props.photoUrls.length) return
-
-  lightboxIndex.value =
-    (lightboxIndex.value + 1) % props.photoUrls.length
-}
-
-function prevPhoto() {
-  if (!props.photoUrls.length) return
-
-  lightboxIndex.value =
-    (lightboxIndex.value - 1 + props.photoUrls.length) %
-    props.photoUrls.length
-}
+watch(
+  () => props.videoUrl,
+  async () => {
+    resetVideoState()
+    await nextTick()
+    if (videoElement.value && hasVideo.value) {
+      videoElement.value.load()
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <template>
-  <div
-    v-if="props.photoUrls.length || props.videoUrl"
-    :class="['gallery', `gallery--${props.mode}`]"
-  >
+  <section class="media-gallery" :class="`media-gallery--${mode}`">
+    <div v-if="photos.length" class="media-section">
+      <h3 class="media-heading">
+        <span>📷</span>
+        Incident Photos
+      </h3>
 
-    <!-- PHOTOS -->
-    <div
-      v-if="props.photoUrls.length"
-      class="gallery__photos"
-    >
-      <button
-        v-for="(url, index) in props.photoUrls"
-        :key="`${index}-${url}`"
-        type="button"
-        class="gallery__thumb"
-        @click="openLightbox(index)"
-      >
-        <img
-          :src="url"
-          alt="Incident evidence"
-          loading="lazy"
-        />
-      </button>
+      <div class="photo-grid">
+        <a
+          v-for="(photo, index) in photos"
+          :key="`${photo}-${index}`"
+          :href="photo"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="photo-item"
+        >
+          <img
+            :src="photo"
+            :alt="`Incident photo ${index + 1}`"
+            loading="lazy"
+          />
+          <span class="photo-open">View photo ↗</span>
+        </a>
+      </div>
     </div>
 
-    <!-- FIREBASE VIDEO -->
-    <div
-      v-if="props.videoUrl"
-      class="gallery__video"
-    >
+    <div v-if="hasVideo" class="media-section">
+      <h3 class="media-heading">
+        <span>🎥</span>
+        Incident Video
+      </h3>
 
-      <div
-        v-if="videoLoading"
-        class="video-loading"
-      >
-        Loading video from Firebase...
-      </div>
+      <div class="video-wrapper">
+        <video
+          ref="videoElement"
+          :key="videoUrl"
+          class="incident-video"
+          :src="videoUrl"
+          controls
+          playsinline
+          webkit-playsinline
+          preload="metadata"
+          controlslist="nodownload"
+          @loadstart="onVideoLoadStart"
+          @loadedmetadata="onVideoMetadata"
+          @canplay="onVideoCanPlay"
+          @error="onVideoError"
+        >
+          Your browser does not support HTML5 video.
+        </video>
 
-      <!-- Direct Firebase download URL -->
-      <video
-        v-if="!videoError"
-        ref="videoPlayer"
-        class="gallery__player"
-        :src="props.videoUrl"
-        controls
-        playsinline
-        webkit-playsinline
-        preload="metadata"
-        @loadstart="onVideoLoadStart"
-        @loadedmetadata="onVideoReady"
-        @canplay="onVideoReady"
-        @error="onVideoError"
-      >
-        Your browser does not support HTML5 video.
-      </video>
-
-      <!-- Playback error -->
-      <div
-        v-if="videoError"
-        class="video-error"
-      >
-        <div class="video-error-icon">
-          ⚠️
-        </div>
-
-        <p class="video-error-title">
-          Unable to play this video
-        </p>
-
-        <p class="video-error-text">
-          The Firebase video URL could not be played by this browser.
-        </p>
-
-        <div class="video-error-actions">
-
-          <button
-            type="button"
-            class="video-retry"
-            @click="retryVideo"
-          >
-            ↻ Retry
-          </button>
-
-          <a
-            :href="props.videoUrl"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="video-open-original"
-          >
-            Open Firebase Video ↗
-          </a>
-
+        <div
+          v-if="videoLoading && !videoReady && !videoError"
+          class="video-status"
+        >
+          <span class="loading-spinner"></span>
+          Loading video...
         </div>
       </div>
 
-    </div>
-
-  </div>
-
-  <!-- PHOTO LIGHTBOX -->
-  <Teleport to="body">
-
-    <Transition name="fade">
-
-      <div
-        v-if="isLightboxOpen"
-        class="lightbox"
-        @click.self="closeLightbox"
-      >
-
-        <button
-          class="lightbox__close"
-          @click="closeLightbox"
-        >
-          ✕
+      <div v-if="videoError" class="video-error" role="alert">
+        <strong>Video playback failed</strong>
+        <p>{{ videoError }}</p>
+        <button type="button" class="retry-button" @click="retryVideo">
+          Retry video
         </button>
-
-        <button
-          v-if="props.photoUrls.length > 1"
-          class="lightbox__nav lightbox__nav--prev"
-          @click.stop="prevPhoto"
-        >
-          ‹
-        </button>
-
-        <img
-          class="lightbox__img"
-          :src="props.photoUrls[lightboxIndex]"
-          alt="Incident evidence"
-          @click.stop
-        />
-
-        <button
-          v-if="props.photoUrls.length > 1"
-          class="lightbox__nav lightbox__nav--next"
-          @click.stop="nextPhoto"
-        >
-          ›
-        </button>
-
       </div>
 
-    </Transition>
+      <a
+        :href="videoUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="original-video-link"
+      >
+        Open original video in browser ↗
+      </a>
+    </div>
 
-  </Teleport>
+    <div v-if="!photos.length && !hasVideo" class="empty-media">
+      <span>📁</span>
+      <p>No photos or videos attached to this incident.</p>
+    </div>
+  </section>
 </template>
 
 <style scoped>
-.gallery {
+.media-gallery {
+  width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 22px;
+}
+
+.media-section {
   width: 100%;
   min-width: 0;
 }
 
-.gallery__photos {
+.media-heading {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 12px;
+  color: #1f2937;
+  font-size: 15px;
+  font-weight: 700;
 }
 
-.gallery__thumb {
-  flex-shrink: 0;
-  width: 76px;
-  height: 76px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.photo-item {
+  position: relative;
+  display: block;
   overflow: hidden;
-  background: var(--bg-input);
-  cursor: pointer;
+  border-radius: 10px;
+  background: #f3f4f6;
+  aspect-ratio: 4 / 3;
 }
 
-.gallery__thumb img {
+.photo-item img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-/* Compact */
-.gallery--compact .gallery__photos {
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.gallery--compact .gallery__thumb {
-  width: 68px;
-  height: 68px;
-}
-
-/* Full */
-.gallery--full .gallery__photos {
-  display: grid;
-  grid-template-columns: repeat(
-    auto-fill,
-    minmax(90px, 1fr)
-  );
-}
-
-.gallery--full .gallery__thumb {
-  width: 100%;
-  height: auto;
-  aspect-ratio: 1;
-}
-
-/* Video */
-.gallery__video {
-  position: relative;
-  width: 100%;
-  min-width: 0;
-  border-radius: 12px;
-  overflow: hidden;
-  background: #000;
-}
-
-.gallery__player {
-  display: block;
-  width: 100%;
-  height: auto;
-  min-height: 180px;
-  max-height: 420px;
-  background: #000;
-  object-fit: contain;
-  border-radius: 12px;
-}
-
-.video-loading {
-  padding: 10px;
-  color: #fff;
-  text-align: center;
-  background: #171717;
-  font-size: 0.8125rem;
-}
-
-/* Error */
-.video-error {
-  padding: 24px 16px;
-  text-align: center;
-  color: #fff;
-  background: #171717;
-}
-
-.video-error-icon {
-  font-size: 1.7rem;
-}
-
-.video-error-title {
-  font-weight: 700;
-  margin: 8px 0 4px;
-}
-
-.video-error-text {
-  font-size: 0.8125rem;
-  color: #d1d5db;
-  line-height: 1.5;
-}
-
-.video-error-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  justify-content: center;
-  margin-top: 16px;
-}
-
-.video-retry,
-.video-open-original {
-  padding: 10px 16px;
-  border: none;
-  border-radius: 8px;
-  color: #fff;
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
-  text-decoration: none;
-}
-
-.video-retry {
-  background: #4b5563;
-}
-
-.video-open-original {
-  background: #2563eb;
-}
-
-/* Lightbox */
-.lightbox {
-  position: fixed;
-  inset: 0;
-  z-index: 99999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.96);
-  padding: 20px;
-}
-
-.lightbox__img {
-  max-width: 100%;
-  max-height: 85vh;
-  object-fit: contain;
-}
-
-.lightbox__close {
+.photo-open {
   position: absolute;
-  top: 20px;
-  right: 20px;
-  width: 42px;
-  height: 42px;
-  border: none;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.15);
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 7px;
   color: white;
-  cursor: pointer;
-}
-
-.lightbox__nav {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 44px;
-  height: 44px;
-  border: none;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.15);
-  color: white;
-  font-size: 28px;
-  cursor: pointer;
-}
-
-.lightbox__nav--prev {
-  left: 12px;
-}
-
-.lightbox__nav--next {
-  right: 12px;
-}
-
-.fade-enter-active,
-.fade-leave-active {
+  background: rgba(0, 0, 0, 0.58);
+  font-size: 11px;
+  text-align: center;
+  opacity: 0;
   transition: opacity 0.2s ease;
 }
 
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+.photo-item:hover .photo-open {
+  opacity: 1;
+}
+
+.video-wrapper {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: #000;
+  border-radius: 12px;
+  min-height: 180px;
+}
+
+.incident-video {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 520px;
+  min-height: 180px;
+  background: #000;
+  object-fit: contain;
+  border-radius: 12px;
+  -webkit-appearance: none;
+}
+
+.video-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: white;
+  background: rgba(0, 0, 0, 0.65);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.loading-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.video-error {
+  margin-top: 12px;
+  padding: 13px;
+  border: 1px solid #fecaca;
+  border-radius: 9px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 13px;
+}
+
+.video-error p {
+  margin: 6px 0 10px;
+  line-height: 1.5;
+}
+
+.retry-button {
+  padding: 8px 13px;
+  border: none;
+  border-radius: 7px;
+  background: #b91c1c;
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.original-video-link {
+  display: inline-block;
+  margin-top: 10px;
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.original-video-link:hover {
+  text-decoration: underline;
+}
+
+.empty-media {
+  padding: 25px;
+  text-align: center;
+  color: #6b7280;
+  background: #f9fafb;
+  border: 1px dashed #d1d5db;
+  border-radius: 10px;
+}
+
+.empty-media span { font-size: 26px; }
+.empty-media p { margin: 8px 0 0; font-size: 13px; }
+
+@media (max-width: 600px) {
+  .photo-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .incident-video { max-height: 350px; }
+  .video-wrapper { border-radius: 8px; }
 }
 </style>
