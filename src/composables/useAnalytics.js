@@ -1,16 +1,21 @@
-// src/composables/useAnalytics.js
 import { ref, onBeforeUnmount } from 'vue'
+import { getAdminAnalytics } from '@/services/adminAnalytics'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
-const REFRESH_MS = 60_000
+const REFRESH_INTERVAL = 60_000
 
-export function useAnalytics(endpoint, paramsOrGetter = {}, options = {}) {
+export function useAnalytics(
+  endpoint,
+  paramsOrGetter = {},
+  options = {}
+) {
   const { autoRefresh = false } = options
 
   const data = ref(null)
   const loading = ref(true)
   const error = ref('')
+
   let timer = null
+  let requestNumber = 0
 
   function resolveParams() {
     return typeof paramsOrGetter === 'function'
@@ -19,27 +24,49 @@ export function useAnalytics(endpoint, paramsOrGetter = {}, options = {}) {
   }
 
   async function fetchOnce() {
+    const currentRequest = ++requestNumber
+
     loading.value = true
     error.value = ''
+
     try {
       const params = resolveParams()
-      const qs = new URLSearchParams(params).toString()
-      const url = `${API_URL}/analytics/${endpoint}${qs ? `?${qs}` : ''}`
-      const resp = await fetch(url)
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-      data.value = await resp.json()
-    } catch (e) {
-      console.error(`[useAnalytics] ${endpoint} failed`, e)
-      error.value = 'Could not load analytics.'
+
+      const result = await getAdminAnalytics(
+        endpoint,
+        params
+      )
+
+      // Prevent an older request from overwriting newer data.
+      if (currentRequest === requestNumber) {
+        data.value = result
+      }
+    } catch (err) {
+      console.error(
+        `[useAnalytics] ${endpoint} failed:`,
+        err
+      )
+
+      if (currentRequest === requestNumber) {
+        error.value =
+          err?.message ||
+          `Unable to load ${endpoint} analytics.`
+      }
     } finally {
-      loading.value = false
+      if (currentRequest === requestNumber) {
+        loading.value = false
+      }
     }
   }
 
   function startTimer() {
     if (!autoRefresh) return
+
     stopTimer()
-    timer = setInterval(fetchOnce, REFRESH_MS)
+
+    timer = setInterval(() => {
+      fetchOnce()
+    }, REFRESH_INTERVAL)
   }
 
   function stopTimer() {
@@ -51,18 +78,70 @@ export function useAnalytics(endpoint, paramsOrGetter = {}, options = {}) {
 
   fetchOnce()
   startTimer()
-  onBeforeUnmount(stopTimer)
 
-  return { data, loading, error, refetch: fetchOnce }
+  onBeforeUnmount(() => {
+    stopTimer()
+    requestNumber++
+  })
+
+  return {
+    data,
+    loading,
+    error,
+    refetch: fetchOnce,
+  }
 }
 
-export function useAnalyticsDashboard(paramsGetter = () => ({})) {
-  const summary    = useAnalytics('summary',     paramsGetter)
-  const timeline   = useAnalytics('timeline',    () => ({ days: 30 }))
-  const barangays  = useAnalytics('by-barangay', paramsGetter)
-  const qrt        = useAnalytics('qrt',         paramsGetter)
-  const responders = useAnalytics('responders',  paramsGetter)
-  const hourly     = useAnalytics('hourly',      () => ({ days: 30 }))
+/**
+ * Shared Admin Analytics Dashboard
+ *
+ * Uses the existing backend endpoints:
+ * /analytics/summary
+ * /analytics/timeline
+ * /analytics/by-barangay
+ * /analytics/qrt
+ * /analytics/responders
+ * /analytics/hourly
+ */
+
+export function useAnalyticsDashboard(
+  paramsGetter = () => ({})
+) {
+  const summary = useAnalytics(
+    'summary',
+    paramsGetter,
+    { autoRefresh: true }
+  )
+
+  const timeline = useAnalytics(
+    'timeline',
+    () => ({ days: 30 }),
+    { autoRefresh: true }
+  )
+
+  const barangays = useAnalytics(
+    'by-barangay',
+    paramsGetter,
+    { autoRefresh: true }
+  )
+
+  const qrt = useAnalytics(
+    'qrt',
+    paramsGetter,
+    { autoRefresh: true }
+  )
+
+  const responders = useAnalytics(
+    'responders',
+    paramsGetter,
+    { autoRefresh: true }
+  )
+
+  const hourly = useAnalytics(
+    'hourly',
+    () => ({ days: 30 }),
+    { autoRefresh: true }
+  )
 
   async function refetchAll() {
     await Promise.all([
@@ -75,5 +154,13 @@ export function useAnalyticsDashboard(paramsGetter = () => ({})) {
     ])
   }
 
-  return { summary, timeline, barangays, qrt, responders, hourly, refetchAll }
+  return {
+    summary,
+    timeline,
+    barangays,
+    qrt,
+    responders,
+    hourly,
+    refetchAll,
+  }
 }
