@@ -1,13 +1,3 @@
-// src/composables/useMediaUpload.js
-//
-// Uploads photos and videos to Firebase Storage.
-// Storage structure: incidents/{incidentId}/
-//
-// Returns:
-// {
-//   photoUrls: string[],
-//   videoUrl: string | null
-// }
 
 import { ref, computed } from 'vue'
 
@@ -19,7 +9,6 @@ import {
 
 import { storage } from '@/firebase'
 
-// MIME type fallbacks based on file extension.
 const MIME_TYPES = {
   mp4: 'video/mp4',
   m4v: 'video/x-m4v',
@@ -44,100 +33,76 @@ function extFromName(name) {
   return parts.length > 1 ? parts.pop().toLowerCase() : ''
 }
 
-/**
- * Resolve the MIME type to store on the Firebase object.
- */
 function getContentType(file) {
   const extension = extFromName(file.name)
   const extensionMime = MIME_TYPES[extension]
   const browserType = (file.type || '').toLowerCase()
 
-  if (extensionMime) {
-    if (
-      browserType &&
-      browserType !== extensionMime &&
-      browserType !== 'application/octet-stream'
-    ) {
-      console.warn(
-        `[MediaUpload] MIME mismatch for "${file.name}": ` +
-        `extension implies "${extensionMime}", browser reports "${browserType}". ` +
-        `Using extension-derived type.`
-      )
-    }
-    return extensionMime
-  }
-
-  if (browserType && browserType !== 'application/octet-stream') {
+  if (
+    browserType &&
+    browserType !== 'application/octet-stream'
+  ) {
     return browserType
   }
 
-  return ''
+  return extensionMime || 'application/octet-stream'
 }
 
-function warnIfLikelyUnplayable(file, kind) {
-  if (kind !== 'video') return
-  const ext = extFromName(file.name)
-  if (ext === 'mov' || ext === 'hevc') {
-    console.warn(
-      `[MediaUpload] Video "${file.name}" is a ${ext.toUpperCase()} file. ` +
-      `Applying Fix 1: Forcing upload as .mp4 for iOS compatibility.`
-    )
-  }
-}
-
-/**
- * Upload one file to Firebase Storage.
- */
 function uploadOne(file, path, onProgress) {
   return new Promise((resolve, reject) => {
     const fileRef = storageRef(storage, path)
     const contentType = getContentType(file)
 
     const metadata = {
+      contentType,
       cacheControl: 'public, max-age=3600',
       customMetadata: {
         originalFileName: file.name || 'unknown',
-        uploadedAt: new Date().toISOString(),
         originalMimeType: file.type || 'unknown',
-        resolvedMimeType: contentType || 'unknown',
+        uploadedAt: new Date().toISOString(),
       },
     }
 
-    if (contentType) {
-      metadata.contentType = contentType
-    }
-
-    console.log('[MediaUpload] Uploading file:', {
+    console.log('[MediaUpload] Uploading:', {
       name: file.name,
+      type: contentType,
       size: file.size,
-      storageMimeType: contentType || 'not explicitly specified',
       path,
     })
 
-    const task = uploadBytesResumable(fileRef, file, metadata)
+    const task = uploadBytesResumable(
+      fileRef,
+      file,
+      metadata
+    )
 
     task.on(
       'state_changed',
+
       (snapshot) => {
-        onProgress(snapshot.bytesTransferred, snapshot.totalBytes)
+        onProgress?.(
+          snapshot.bytesTransferred,
+          snapshot.totalBytes
+        )
       },
+
       (error) => {
         console.error('[MediaUpload] Upload failed:', error)
         reject(error)
       },
+
       async () => {
         try {
-          const storedMetadata = task.snapshot.metadata || {}
-          console.log(
-            '[MediaUpload] Upload completed:',
-            path,
-            '| stored Content-Type:',
-            storedMetadata.contentType || '(none)'
-          )
-
           const url = await getDownloadURL(task.snapshot.ref)
+
+          console.log('[MediaUpload] Firebase URL obtained:', url)
+
           resolve(url)
         } catch (error) {
+          console.error(
+            '[MediaUpload] Could not get download URL:',
+            error
+          )
           reject(error)
         }
       }
@@ -166,7 +131,10 @@ export function useMediaUpload() {
 
   const progress = computed(() => {
     if (!totalBytes.value) return 0
-    return Math.round((loadedBytes.value / totalBytes.value) * 100)
+
+    return Math.round(
+      (loadedBytes.value / totalBytes.value) * 100
+    )
   })
 
   function setFile(label, patch) {
@@ -185,7 +153,11 @@ export function useMediaUpload() {
     error.value = ''
   }
 
-  async function uploadAll(incidentId, photos = [], video = null) {
+  async function uploadAll(
+    incidentId,
+    photos = [],
+    video = null
+  ) {
     if (!incidentId) {
       throw new Error('Incident ID is required.')
     }
@@ -197,7 +169,7 @@ export function useMediaUpload() {
     let videoUrl = null
 
     try {
-      // Upload photos sequentially.
+      // Upload photos.
       for (let i = 0; i < photos.length; i++) {
         const file = photos[i]
         const label = `photo-${i + 1}`
@@ -209,20 +181,28 @@ export function useMediaUpload() {
         })
 
         const extension = extFromName(file.name) || 'jpg'
-        const path = `incidents/${incidentId}/photo-${i + 1}.${extension}`
 
-        const url = await uploadOne(file, path, (loaded, total) => {
-          setFile(label, { loaded, total })
+        const path =
+          `incidents/${incidentId}/photo-${i + 1}.${extension}`
+
+        const url = await uploadOne(
+          file,
+          path,
+          (loaded, total) => {
+            setFile(label, { loaded, total })
+          }
+        )
+
+        setFile(label, {
+          status: 'done',
+          url,
         })
 
-        setFile(label, { status: 'done', url })
         photoUrls.push(url)
       }
 
-      // Upload optional video.
+      // Upload original video without renaming or conversion.
       if (video) {
-        warnIfLikelyUnplayable(video, 'video')
-
         const label = 'video'
 
         setFile(label, {
@@ -231,21 +211,18 @@ export function useMediaUpload() {
           status: 'uploading',
         })
 
-        // -----------------------------------------------------------------
-        // FIX 1: FORCE .MP4 EXTENSION FOR IOS COMPATIBILITY
-        // We create a new File object that pretends to be an MP4.
-        // This tricks iOS Safari into playing it natively over the network.
-        // -----------------------------------------------------------------
-        const forcedMp4File = new File([video], `video.mp4`, {
-          type: 'video/mp4',
-          lastModified: Date.now()
-        })
+        const extension = extFromName(video.name) || 'mp4'
 
-        const path = `incidents/${incidentId}/video.mp4`
+        const path =
+          `incidents/${incidentId}/video.${extension}`
 
-        videoUrl = await uploadOne(forcedMp4File, path, (loaded, total) => {
-          setFile(label, { loaded, total })
-        })
+        videoUrl = await uploadOne(
+          video,
+          path,
+          (loaded, total) => {
+            setFile(label, { loaded, total })
+          }
+        )
 
         setFile(label, {
           status: 'done',
@@ -253,17 +230,30 @@ export function useMediaUpload() {
         })
       }
 
-      uploading.value = false
+      console.log('[MediaUpload] Completed:', {
+        incidentId,
+        photoUrls,
+        videoUrl,
+      })
 
       return {
         photoUrls,
         videoUrl,
       }
+
     } catch (uploadError) {
-      console.error('[useMediaUpload] Upload failed:', uploadError)
-      error.value = uploadError?.message || 'Upload failed.'
-      uploading.value = false
+      console.error(
+        '[useMediaUpload] Upload failed:',
+        uploadError
+      )
+
+      error.value =
+        uploadError?.message || 'Upload failed.'
+
       throw uploadError
+
+    } finally {
+      uploading.value = false
     }
   }
 
